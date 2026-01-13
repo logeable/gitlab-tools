@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k0kubun/pp/v3"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
@@ -70,12 +71,24 @@ var projectListCmd = &cobra.Command{
 	RunE: runProjectListCmd,
 }
 
+var projectGetCmd = &cobra.Command{
+	Use:   "get <项目ID>",
+	Short: "获取项目详细信息",
+	Long:  "获取指定项目的详细信息",
+	Example: `  gitlab-tools project get 123
+  gitlab-tools project get my-group/my-project
+  gitlab-tools project get 123 --detail`,
+	Args: cobra.ExactArgs(1),
+	RunE: runProjectGetCmd,
+}
+
 var (
 	projectOwned      bool
 	projectArchived   bool
 	projectSearch     string
 	projectMatch      string
 	projectLimit      int
+	projectGetDetail  bool
 	pipelineListLimit int
 )
 
@@ -111,12 +124,16 @@ func init() {
 	// 绑定 pipeline list 标志到 Viper
 	viper.BindPFlag("pipeline.list.limit", pipelineListCmd.Flags().Lookup("limit"))
 
+	// project get 标志
+	projectGetCmd.Flags().BoolVar(&projectGetDetail, "detail", false, "使用详细格式（带颜色）显示完整的项目数据结构")
+
 	// 添加子命令
 	rootCmd.AddCommand(pipelineCmd)
 	rootCmd.AddCommand(projectCmd)
 	pipelineCmd.AddCommand(pipelineGetCmd)
 	pipelineCmd.AddCommand(pipelineListCmd)
 	projectCmd.AddCommand(projectListCmd)
+	projectCmd.AddCommand(projectGetCmd)
 }
 
 func initViper() {
@@ -244,6 +261,34 @@ func getGitLabToken() string {
 	return viper.GetString("token")
 }
 
+func runProjectGetCmd(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+
+	// 获取配置
+	url := getGitLabURL()
+	token := getGitLabToken()
+	if token == "" {
+		return fmt.Errorf("错误: 请设置 GITLAB_TOKEN 环境变量或使用 --token 标志")
+	}
+
+	// 创建 GitLab 客户端
+	client, err := gitlab.NewClient(token, gitlab.WithBaseURL(url))
+	if err != nil {
+		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
+	}
+
+	// 获取项目信息
+	project, _, err := client.Projects.GetProject(projectID, nil)
+	if err != nil {
+		return fmt.Errorf("获取项目信息失败: %v", err)
+	}
+
+	// 打印项目信息
+	printProjectInfo(project, projectGetDetail)
+
+	return nil
+}
+
 func runProjectListCmd(cmd *cobra.Command, args []string) error {
 	// 获取配置
 	url := getGitLabURL()
@@ -334,6 +379,35 @@ func filterProjectsByRegex(projects []*gitlab.Project, pattern string) []*gitlab
 	}
 
 	return filtered
+}
+
+func printProjectInfo(project *gitlab.Project, useDetail bool) {
+	if useDetail {
+		pp.Print(project)
+		return
+	}
+
+	fmt.Printf("项目信息:\n")
+	fmt.Printf("  ID: %d\n", project.ID)
+	fmt.Printf("  名称: %s\n", project.Name)
+	fmt.Printf("  路径: %s\n", project.PathWithNamespace)
+	fmt.Printf("  可见性: %s\n", project.Visibility)
+	if project.DefaultBranch != "" {
+		fmt.Printf("  默认分支: %s\n", project.DefaultBranch)
+	}
+	if project.Description != "" {
+		fmt.Printf("  描述: %s\n", project.Description)
+	}
+	fmt.Printf("  Web URL: %s\n", project.WebURL)
+	if project.Archived {
+		fmt.Printf("  状态: 已归档\n")
+	}
+	if project.LastActivityAt != nil {
+		fmt.Printf("  最后活动: %s\n", formatToLocalTime(project.LastActivityAt))
+	}
+	if project.CreatedAt != nil {
+		fmt.Printf("  创建时间: %s\n", formatToLocalTime(project.CreatedAt))
+	}
 }
 
 func printProjectsList(projects []*gitlab.Project) {
