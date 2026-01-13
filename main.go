@@ -104,17 +104,46 @@ var branchListCmd = &cobra.Command{
 	RunE: runBranchListCmd,
 }
 
+var branchDiffCmd = &cobra.Command{
+	Use:   "diff <项目ID> <源分支> <目标分支>",
+	Short: "比较分支差异",
+	Long: `比较两个分支之间的差异，显示提交差异和文件变更统计。
+
+源分支（From）：作为比较基准的分支，通常是主分支（如 main 或 master）。
+目标分支（To）：要比较的分支，通常是功能分支（如 feature）。
+
+比较结果将显示目标分支相对于源分支的变化，包括：
+- 从源分支到目标分支之间的所有提交
+- 目标分支中新增、修改、删除的文件
+
+示例：gitlab-tools branch diff 123 main feature
+将显示 feature 分支相对于 main 分支的所有变更。`,
+	Example: `  gitlab-tools branch diff 123 main feature
+  gitlab-tools branch diff my-group/my-project main feature
+  gitlab-tools branch diff 123 main feature --stat
+  gitlab-tools branch diff 123 main feature --commits
+  gitlab-tools branch diff 123 main feature --create-mr
+  gitlab-tools branch diff 123 main feature --create-mr --mr-title "我的功能"`,
+	Args: cobra.ExactArgs(3),
+	RunE: runBranchDiffCmd,
+}
+
 var (
-	projectOwned        bool
-	projectArchived     bool
-	projectSearch       string
-	projectMatch        string
-	projectLimit        int
-	projectGetDetail    bool
-	pipelineListLimit   int
-	branchListSearch    string
-	branchListHideEmpty bool
-	branchListQuiet     bool
+	projectOwned            bool
+	projectArchived         bool
+	projectSearch           string
+	projectMatch            string
+	projectLimit            int
+	projectGetDetail        bool
+	pipelineListLimit       int
+	branchListSearch        string
+	branchListHideEmpty     bool
+	branchListQuiet         bool
+	branchDiffStat          bool
+	branchDiffCommits       bool
+	branchDiffCreateMR      bool
+	branchDiffMRTitle       string
+	branchDiffMRDescription string
 )
 
 func init() {
@@ -157,6 +186,13 @@ func init() {
 	branchListCmd.Flags().BoolVar(&branchListHideEmpty, "hide-empty", false, "如果没有分支则隐藏该项目")
 	branchListCmd.Flags().BoolVar(&branchListQuiet, "quiet", false, "只显示项目名")
 
+	// branch diff 标志
+	branchDiffCmd.Flags().BoolVar(&branchDiffStat, "stat", false, "仅显示文件变更统计信息")
+	branchDiffCmd.Flags().BoolVar(&branchDiffCommits, "commits", false, "仅显示提交差异列表")
+	branchDiffCmd.Flags().BoolVar(&branchDiffCreateMR, "create-mr", false, "在显示差异后创建 Merge Request")
+	branchDiffCmd.Flags().StringVar(&branchDiffMRTitle, "mr-title", "", "指定 Merge Request 的标题（与 --create-mr 一起使用）")
+	branchDiffCmd.Flags().StringVar(&branchDiffMRDescription, "mr-description", "", "指定 Merge Request 的描述（与 --create-mr 一起使用）")
+
 	// 添加子命令
 	rootCmd.AddCommand(pipelineCmd)
 	rootCmd.AddCommand(projectCmd)
@@ -166,6 +202,7 @@ func init() {
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectGetCmd)
 	branchCmd.AddCommand(branchListCmd)
+	branchCmd.AddCommand(branchDiffCmd)
 }
 
 func initViper() {
@@ -404,6 +441,83 @@ func runBranchListCmd(cmd *cobra.Command, args []string) error {
 			// 打印分支信息
 			printBranchesList(project.PathWithNamespace, branches, false, branchListQuiet)
 		}
+	}
+
+	return nil
+}
+
+func runBranchDiffCmd(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+	sourceBranch := args[1]
+	targetBranch := args[2]
+
+	// 获取配置
+	url := getGitLabURL()
+	token := getGitLabToken()
+	if token == "" {
+		return fmt.Errorf("错误: 请设置 GITLAB_TOKEN 环境变量或使用 --token 标志")
+	}
+
+	// 创建 GitLab 客户端
+	client, err := gitlab.NewClient(token, gitlab.WithBaseURL(url))
+	if err != nil {
+		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
+	}
+
+	// 构建比较选项
+	opt := &gitlab.CompareOptions{
+		From: gitlab.Ptr(sourceBranch),
+		To:   gitlab.Ptr(targetBranch),
+	}
+
+	// 获取分支差异
+	compare, _, err := client.Repositories.Compare(projectID, opt)
+	if err != nil {
+		return fmt.Errorf("获取分支差异失败: %v", err)
+	}
+
+	// 打印分支差异信息
+	printBranchDiff(projectID, sourceBranch, targetBranch, compare, branchDiffStat, branchDiffCommits)
+
+	// 如果指定了 --create-mr，创建 Merge Request
+	if branchDiffCreateMR {
+		// 检查是否有差异：如果没有提交差异且没有文件差异，则不创建 MR
+		hasCommits := len(compare.Commits) > 0
+		hasDiffs := len(compare.Diffs) > 0
+
+		if !hasCommits && !hasDiffs {
+			fmt.Println()
+			fmt.Println("提示: 两个分支之间没有差异，跳过创建 Merge Request")
+			return nil
+		}
+
+		// 注意：diff 比较显示的是 targetBranch 相对于 sourceBranch 的变化
+		// 创建 MR 时，应该从 targetBranch（功能分支）合并到 sourceBranch（主分支）
+		// 所以 SourceBranch 是 targetBranch，TargetBranch 是 sourceBranch
+		mrTitle := branchDiffMRTitle
+		if mrTitle == "" {
+			// 如果没有指定标题，使用默认格式
+			mrTitle = fmt.Sprintf("Merge %s into %s", targetBranch, sourceBranch)
+		}
+
+		// 创建 Merge Request（从 targetBranch 合并到 sourceBranch）
+		mrOpt := &gitlab.CreateMergeRequestOptions{
+			Title:        gitlab.Ptr(mrTitle),
+			SourceBranch: gitlab.Ptr(targetBranch),
+			TargetBranch: gitlab.Ptr(sourceBranch),
+		}
+
+		if branchDiffMRDescription != "" {
+			mrOpt.Description = gitlab.Ptr(branchDiffMRDescription)
+		}
+
+		mr, _, err := client.MergeRequests.CreateMergeRequest(projectID, mrOpt)
+		if err != nil {
+			return fmt.Errorf("创建 Merge Request 失败: %v", err)
+		}
+
+		// 打印 Merge Request 信息
+		printMergeRequestInfo(mr)
 	}
 
 	return nil
@@ -676,6 +790,178 @@ func printPipelineInfo(pipeline *gitlab.Pipeline) {
 	}
 	if pipeline.Coverage != "" {
 		fmt.Printf("  覆盖率: %s\n", pipeline.Coverage)
+	}
+}
+
+func printBranchDiff(projectID, sourceBranch, targetBranch string, compare *gitlab.Compare, statOnly, commitsOnly bool) {
+	fmt.Printf("项目: %s\n", projectID)
+	fmt.Printf("源分支: %s\n", sourceBranch)
+	fmt.Printf("目标分支: %s\n", targetBranch)
+	fmt.Println()
+
+	// 如果仅显示提交列表
+	if commitsOnly {
+		if len(compare.Commits) == 0 {
+			fmt.Println("无提交差异")
+			return
+		}
+		fmt.Printf("提交差异 (%d 个提交):\n\n", len(compare.Commits))
+		for i, commit := range compare.Commits {
+			sha := commit.ID
+			if len(sha) > 8 {
+				sha = sha[:8]
+			}
+			fmt.Printf("  [%d] %s\n", i+1, sha)
+			if commit.AuthorName != "" {
+				fmt.Printf("      作者: %s", commit.AuthorName)
+				if commit.AuthorEmail != "" {
+					fmt.Printf(" <%s>", commit.AuthorEmail)
+				}
+				fmt.Println()
+			}
+			if commit.Message != "" {
+				message := strings.Split(commit.Message, "\n")[0]
+				if len(message) > 80 {
+					message = message[:80] + "..."
+				}
+				fmt.Printf("      提交信息: %s\n", message)
+			}
+			if commit.CommittedDate != nil {
+				fmt.Printf("      提交时间: %s\n", formatToLocalTime(commit.CommittedDate))
+			}
+			fmt.Println()
+		}
+		return
+	}
+
+	// 如果仅显示统计信息
+	if statOnly {
+		added := 0
+		modified := 0
+		deleted := 0
+		renamed := 0
+
+		for _, diff := range compare.Diffs {
+			if diff.NewFile {
+				added++
+			} else if diff.DeletedFile {
+				deleted++
+			} else if diff.RenamedFile {
+				renamed++
+			} else {
+				modified++
+			}
+		}
+
+		fmt.Printf("文件变更统计:\n")
+		fmt.Printf("  新增: %d\n", added)
+		fmt.Printf("  修改: %d\n", modified)
+		fmt.Printf("  删除: %d\n", deleted)
+		if renamed > 0 {
+			fmt.Printf("  重命名: %d\n", renamed)
+		}
+		fmt.Printf("  总计: %d\n", len(compare.Diffs))
+		return
+	}
+
+	// 显示完整信息
+	// 提交差异
+	if len(compare.Commits) == 0 {
+		fmt.Println("无提交差异")
+	} else {
+		fmt.Printf("提交差异 (%d 个提交):\n\n", len(compare.Commits))
+		for i, commit := range compare.Commits {
+			sha := commit.ID
+			if len(sha) > 8 {
+				sha = sha[:8]
+			}
+			fmt.Printf("  [%d] %s\n", i+1, sha)
+			if commit.AuthorName != "" {
+				fmt.Printf("      作者: %s", commit.AuthorName)
+				if commit.AuthorEmail != "" {
+					fmt.Printf(" <%s>", commit.AuthorEmail)
+				}
+				fmt.Println()
+			}
+			if commit.Message != "" {
+				message := strings.Split(commit.Message, "\n")[0]
+				if len(message) > 80 {
+					message = message[:80] + "..."
+				}
+				fmt.Printf("      提交信息: %s\n", message)
+			}
+			if commit.CommittedDate != nil {
+				fmt.Printf("      提交时间: %s\n", formatToLocalTime(commit.CommittedDate))
+			}
+			fmt.Println()
+		}
+	}
+
+	// 文件变更统计
+	added := 0
+	modified := 0
+	deleted := 0
+	renamed := 0
+
+	for _, diff := range compare.Diffs {
+		if diff.NewFile {
+			added++
+		} else if diff.DeletedFile {
+			deleted++
+		} else if diff.RenamedFile {
+			renamed++
+		} else {
+			modified++
+		}
+	}
+
+	fmt.Printf("文件变更统计:\n")
+	fmt.Printf("  新增: %d\n", added)
+	fmt.Printf("  修改: %d\n", modified)
+	fmt.Printf("  删除: %d\n", deleted)
+	if renamed > 0 {
+		fmt.Printf("  重命名: %d\n", renamed)
+	}
+	fmt.Printf("  总计: %d\n", len(compare.Diffs))
+	fmt.Println()
+
+	// 详细文件差异
+	if len(compare.Diffs) > 0 {
+		fmt.Printf("文件变更详情:\n\n")
+		for i, diff := range compare.Diffs {
+			changeType := "修改"
+			if diff.NewFile {
+				changeType = "新增"
+			} else if diff.DeletedFile {
+				changeType = "删除"
+			} else if diff.RenamedFile {
+				changeType = "重命名"
+			}
+
+			fmt.Printf("  [%d] %s: %s\n", i+1, changeType, diff.NewPath)
+			if diff.RenamedFile && diff.OldPath != diff.NewPath {
+				fmt.Printf("      原路径: %s\n", diff.OldPath)
+			}
+		}
+	}
+}
+
+func printMergeRequestInfo(mr *gitlab.MergeRequest) {
+	fmt.Println()
+	fmt.Println("Merge Request 已创建:")
+	fmt.Printf("  ID: %d\n", mr.IID)
+	fmt.Printf("  标题: %s\n", mr.Title)
+	if mr.Description != "" {
+		fmt.Printf("  描述: %s\n", mr.Description)
+	}
+	fmt.Printf("  源分支: %s\n", mr.SourceBranch)
+	fmt.Printf("  目标分支: %s\n", mr.TargetBranch)
+	fmt.Printf("  状态: %s\n", mr.State)
+	if mr.WebURL != "" {
+		fmt.Printf("  Web URL: %s\n", mr.WebURL)
+	}
+	if mr.CreatedAt != nil {
+		fmt.Printf("  创建时间: %s\n", formatToLocalTime(mr.CreatedAt))
 	}
 }
 
