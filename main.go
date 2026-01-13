@@ -121,29 +121,70 @@ var branchDiffCmd = &cobra.Command{
 	Example: `  gitlab-tools branch diff 123 main feature
   gitlab-tools branch diff my-group/my-project main feature
   gitlab-tools branch diff 123 main feature --stat
-  gitlab-tools branch diff 123 main feature --commits
-  gitlab-tools branch diff 123 main feature --create-mr
-  gitlab-tools branch diff 123 main feature --create-mr --mr-title "我的功能"`,
+  gitlab-tools branch diff 123 main feature --commits`,
 	Args: cobra.ExactArgs(3),
 	RunE: runBranchDiffCmd,
 }
 
+var mrCmd = &cobra.Command{
+	Use:   "mr",
+	Short: "Merge Request 管理",
+	Long:  "查看和管理 GitLab Merge Request",
+}
+
+var mrListCmd = &cobra.Command{
+	Use:   "list <项目ID>",
+	Short: "列出项目的开放 Merge Request",
+	Long:  "列出指定项目的所有开放 Merge Request 列表",
+	Example: `  gitlab-tools mr list 123
+  gitlab-tools mr list my-group/my-project`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMRListCmd,
+}
+
+var mrCreateCmd = &cobra.Command{
+	Use:   "create <项目ID> <源分支> <目标分支>",
+	Short: "创建 Merge Request",
+	Long:  "创建新的 Merge Request，从源分支合并到目标分支",
+	Example: `  gitlab-tools mr create 123 feature main
+  gitlab-tools mr create my-group/my-project feature main
+  gitlab-tools mr create 123 feature main --title "我的功能"
+  gitlab-tools mr create 123 feature main --title "我的功能" --description "功能描述"
+  gitlab-tools mr create 123 feature main --quiet`,
+	Args: cobra.ExactArgs(3),
+	RunE: runMRCreateCmd,
+}
+
+var mrMergeCmd = &cobra.Command{
+	Use:   "merge <项目ID> <MR IID>",
+	Short: "合并 Merge Request",
+	Long:  "合并指定的 Merge Request",
+	Example: `  gitlab-tools mr merge 123 456
+  gitlab-tools mr merge my-group/my-project 456
+  gitlab-tools mr merge 123 456 --delete-source-branch
+  gitlab-tools mr merge 123 456 --merge-commit-message "合并信息"`,
+	Args: cobra.ExactArgs(2),
+	RunE: runMRMergeCmd,
+}
+
 var (
-	projectOwned            bool
-	projectArchived         bool
-	projectSearch           string
-	projectMatch            string
-	projectLimit            int
-	projectGetDetail        bool
-	pipelineListLimit       int
-	branchListSearch        string
-	branchListHideEmpty     bool
-	branchListQuiet         bool
-	branchDiffStat          bool
-	branchDiffCommits       bool
-	branchDiffCreateMR      bool
-	branchDiffMRTitle       string
-	branchDiffMRDescription string
+	projectOwned         bool
+	projectArchived      bool
+	projectSearch        string
+	projectMatch         string
+	projectLimit         int
+	projectGetDetail     bool
+	pipelineListLimit    int
+	branchListSearch     string
+	branchListHideEmpty  bool
+	branchListQuiet      bool
+	branchDiffStat       bool
+	branchDiffCommits    bool
+	mrCreateTitle        string
+	mrCreateDescription  string
+	mrCreateQuiet        bool
+	mrMergeDeleteSource  bool
+	mrMergeCommitMessage string
 )
 
 func init() {
@@ -189,20 +230,30 @@ func init() {
 	// branch diff 标志
 	branchDiffCmd.Flags().BoolVar(&branchDiffStat, "stat", false, "仅显示文件变更统计信息")
 	branchDiffCmd.Flags().BoolVar(&branchDiffCommits, "commits", false, "仅显示提交差异列表")
-	branchDiffCmd.Flags().BoolVar(&branchDiffCreateMR, "create-mr", false, "在显示差异后创建 Merge Request")
-	branchDiffCmd.Flags().StringVar(&branchDiffMRTitle, "mr-title", "", "指定 Merge Request 的标题（与 --create-mr 一起使用）")
-	branchDiffCmd.Flags().StringVar(&branchDiffMRDescription, "mr-description", "", "指定 Merge Request 的描述（与 --create-mr 一起使用）")
+
+	// mr create 标志
+	mrCreateCmd.Flags().StringVar(&mrCreateTitle, "title", "", "指定 Merge Request 的标题")
+	mrCreateCmd.Flags().StringVar(&mrCreateDescription, "description", "", "指定 Merge Request 的描述")
+	mrCreateCmd.Flags().BoolVar(&mrCreateQuiet, "quiet", false, "quiet 模式：创建 MR 后只显示链接")
+
+	// mr merge 标志
+	mrMergeCmd.Flags().BoolVar(&mrMergeDeleteSource, "delete-source-branch", false, "合并后删除源分支")
+	mrMergeCmd.Flags().StringVar(&mrMergeCommitMessage, "merge-commit-message", "", "自定义合并提交信息")
 
 	// 添加子命令
 	rootCmd.AddCommand(pipelineCmd)
 	rootCmd.AddCommand(projectCmd)
 	rootCmd.AddCommand(branchCmd)
+	rootCmd.AddCommand(mrCmd)
 	pipelineCmd.AddCommand(pipelineGetCmd)
 	pipelineCmd.AddCommand(pipelineListCmd)
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectGetCmd)
 	branchCmd.AddCommand(branchListCmd)
 	branchCmd.AddCommand(branchDiffCmd)
+	mrCmd.AddCommand(mrListCmd)
+	mrCmd.AddCommand(mrCreateCmd)
+	mrCmd.AddCommand(mrMergeCmd)
 }
 
 func initViper() {
@@ -479,81 +530,106 @@ func runBranchDiffCmd(cmd *cobra.Command, args []string) error {
 	// 打印分支差异信息
 	printBranchDiff(projectID, sourceBranch, targetBranch, compare, branchDiffStat, branchDiffCommits)
 
-	// 如果指定了 --create-mr，创建 Merge Request
-	if branchDiffCreateMR {
-		// 检查是否有差异：如果没有提交差异且没有文件差异，则不创建 MR
-		hasCommits := len(compare.Commits) > 0
-		hasDiffs := len(compare.Diffs) > 0
+	return nil
+}
 
-		if !hasCommits && !hasDiffs {
-			fmt.Println()
-			fmt.Println("提示: 两个分支之间没有差异，跳过创建 Merge Request")
-			return nil
-		}
+func runMRCreateCmd(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+	sourceBranch := args[1]
+	targetBranch := args[2]
 
-		// 注意：diff 比较显示的是 targetBranch 相对于 sourceBranch 的变化
-		// 创建 MR 时，应该从 targetBranch（功能分支）合并到 sourceBranch（主分支）
-		// 所以 SourceBranch 是 targetBranch，TargetBranch 是 sourceBranch
-		mrTitle := branchDiffMRTitle
-		if mrTitle == "" {
-			// 如果没有指定标题，使用默认格式
-			mrTitle = fmt.Sprintf("Merge %s into %s", targetBranch, sourceBranch)
-		}
-
-		// 检查是否已经存在相同源分支和目标分支的开放 MR
-		existingMRs, _, err := client.MergeRequests.ListProjectMergeRequests(projectID, &gitlab.ListProjectMergeRequestsOptions{
-			SourceBranch: gitlab.Ptr(targetBranch),
-			TargetBranch: gitlab.Ptr(sourceBranch),
-			State:        gitlab.Ptr("opened"),
-			ListOptions: gitlab.ListOptions{
-				PerPage: 10,
-				Page:    1,
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("检查现有 Merge Request 失败: %v", err)
-		}
-
-		// 如果已存在开放的 MR，则提示并跳过创建
-		if len(existingMRs) > 0 {
-			fmt.Println()
-			fmt.Printf("提示: 源分支 %s 到目标分支 %s 已存在开放的 Merge Request:\n", targetBranch, sourceBranch)
-			for _, existingMR := range existingMRs {
-				fmt.Printf("  !%d: %s\n", existingMR.IID, existingMR.Title)
-				if existingMR.WebURL != "" {
-					fmt.Printf("      %s\n", existingMR.WebURL)
-				}
-			}
-			fmt.Println("跳过创建新的 Merge Request")
-			return nil
-		}
-
-		// 获取当前用户信息，用于设置 assignee
-		currentUser, _, err := client.Users.CurrentUser()
-		if err != nil {
-			return fmt.Errorf("获取当前用户信息失败: %v", err)
-		}
-
-		// 创建 Merge Request（从 targetBranch 合并到 sourceBranch）
-		mrOpt := &gitlab.CreateMergeRequestOptions{
-			Title:        gitlab.Ptr(mrTitle),
-			SourceBranch: gitlab.Ptr(targetBranch),
-			TargetBranch: gitlab.Ptr(sourceBranch),
-			AssigneeID:   gitlab.Ptr(currentUser.ID),
-		}
-
-		if branchDiffMRDescription != "" {
-			mrOpt.Description = gitlab.Ptr(branchDiffMRDescription)
-		}
-
-		mr, _, err := client.MergeRequests.CreateMergeRequest(projectID, mrOpt)
-		if err != nil {
-			return fmt.Errorf("创建 Merge Request 失败: %v", err)
-		}
-
-		// 打印 Merge Request 信息
-		printMergeRequestInfo(mr)
+	// 获取配置
+	url := getGitLabURL()
+	token := getGitLabToken()
+	if token == "" {
+		return fmt.Errorf("错误: 请设置 GITLAB_TOKEN 环境变量或使用 --token 标志")
 	}
+
+	// 创建 GitLab 客户端
+	client, err := gitlab.NewClient(token, gitlab.WithBaseURL(url))
+	if err != nil {
+		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
+	}
+
+	// 检查分支之间是否有差异
+	compareOpt := &gitlab.CompareOptions{
+		From: gitlab.Ptr(targetBranch),
+		To:   gitlab.Ptr(sourceBranch),
+	}
+
+	compare, _, err := client.Repositories.Compare(projectID, compareOpt)
+	if err != nil {
+		return fmt.Errorf("获取分支差异失败: %v", err)
+	}
+
+	// 检查是否有差异：如果没有提交差异且没有文件差异，则不创建 MR
+	hasCommits := len(compare.Commits) > 0
+	hasDiffs := len(compare.Diffs) > 0
+
+	if !hasCommits && !hasDiffs {
+		fmt.Println("提示: 两个分支之间没有差异，跳过创建 Merge Request")
+		return nil
+	}
+
+	// 检查是否已经存在相同源分支和目标分支的开放 MR
+	existingMRs, _, err := client.MergeRequests.ListProjectMergeRequests(projectID, &gitlab.ListProjectMergeRequestsOptions{
+		SourceBranch: gitlab.Ptr(sourceBranch),
+		TargetBranch: gitlab.Ptr(targetBranch),
+		State:        gitlab.Ptr("opened"),
+		ListOptions: gitlab.ListOptions{
+			PerPage: 10,
+			Page:    1,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("检查现有 Merge Request 失败: %v", err)
+	}
+
+	// 如果已存在开放的 MR，则提示并跳过创建
+	if len(existingMRs) > 0 {
+		fmt.Printf("提示: 源分支 %s 到目标分支 %s 已存在开放的 Merge Request:\n", sourceBranch, targetBranch)
+		for _, existingMR := range existingMRs {
+			fmt.Printf("  !%d: %s\n", existingMR.IID, existingMR.Title)
+			if existingMR.WebURL != "" {
+				fmt.Printf("      %s\n", existingMR.WebURL)
+			}
+		}
+		fmt.Println("跳过创建新的 Merge Request")
+		return nil
+	}
+
+	// 获取当前用户信息，用于设置 assignee
+	currentUser, _, err := client.Users.CurrentUser()
+	if err != nil {
+		return fmt.Errorf("获取当前用户信息失败: %v", err)
+	}
+
+	// 设置 MR 标题
+	mrTitle := mrCreateTitle
+	if mrTitle == "" {
+		// 如果没有指定标题，使用默认格式
+		mrTitle = fmt.Sprintf("Merge %s into %s", sourceBranch, targetBranch)
+	}
+
+	// 创建 Merge Request（从 sourceBranch 合并到 targetBranch）
+	mrOpt := &gitlab.CreateMergeRequestOptions{
+		Title:        gitlab.Ptr(mrTitle),
+		SourceBranch: gitlab.Ptr(sourceBranch),
+		TargetBranch: gitlab.Ptr(targetBranch),
+		AssigneeID:   gitlab.Ptr(currentUser.ID),
+	}
+
+	if mrCreateDescription != "" {
+		mrOpt.Description = gitlab.Ptr(mrCreateDescription)
+	}
+
+	mr, _, err := client.MergeRequests.CreateMergeRequest(projectID, mrOpt)
+	if err != nil {
+		return fmt.Errorf("创建 Merge Request 失败: %v", err)
+	}
+
+	// 打印 Merge Request 信息
+	printMergeRequestInfo(mr, mrCreateQuiet)
 
 	return nil
 }
@@ -981,7 +1057,16 @@ func printBranchDiff(projectID, sourceBranch, targetBranch string, compare *gitl
 	}
 }
 
-func printMergeRequestInfo(mr *gitlab.MergeRequest) {
+func printMergeRequestInfo(mr *gitlab.MergeRequest, quiet bool) {
+	if quiet {
+		// quiet 模式：只显示链接
+		if mr.WebURL != "" {
+			fmt.Println(mr.WebURL)
+		}
+		return
+	}
+
+	// 正常模式：显示完整信息
 	fmt.Println()
 	fmt.Println("Merge Request 已创建:")
 	fmt.Printf("  ID: %d\n", mr.IID)
@@ -1005,6 +1090,136 @@ func formatToLocalTime(t *time.Time) string {
 		return ""
 	}
 	return t.In(time.Local).Format("2006-01-02 15:04:05")
+}
+
+func runMRListCmd(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+
+	// 获取配置
+	url := getGitLabURL()
+	token := getGitLabToken()
+	if token == "" {
+		return fmt.Errorf("错误: 请设置 GITLAB_TOKEN 环境变量或使用 --token 标志")
+	}
+
+	// 创建 GitLab 客户端
+	client, err := gitlab.NewClient(token, gitlab.WithBaseURL(url))
+	if err != nil {
+		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
+	}
+
+	// 构建查询选项，只查询开放的 MR
+	opt := &gitlab.ListProjectMergeRequestsOptions{
+		State: gitlab.Ptr("opened"),
+		ListOptions: gitlab.ListOptions{
+			PerPage: 100,
+			Page:    1,
+		},
+	}
+
+	// 获取 Merge Request 列表
+	mrs, _, err := client.MergeRequests.ListProjectMergeRequests(projectID, opt)
+	if err != nil {
+		return fmt.Errorf("获取项目 %s 的 Merge Request 列表失败: %v", projectID, err)
+	}
+
+	// 打印 Merge Request 列表
+	printMergeRequestsList(projectID, mrs)
+
+	return nil
+}
+
+func runMRMergeCmd(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+	mrIIDStr := args[1]
+
+	// 解析 MR IID
+	mrIID, err := strconv.Atoi(mrIIDStr)
+	if err != nil {
+		return fmt.Errorf("无效的 MR IID: %s", mrIIDStr)
+	}
+
+	// 获取配置
+	url := getGitLabURL()
+	token := getGitLabToken()
+	if token == "" {
+		return fmt.Errorf("错误: 请设置 GITLAB_TOKEN 环境变量或使用 --token 标志")
+	}
+
+	// 创建 GitLab 客户端
+	client, err := gitlab.NewClient(token, gitlab.WithBaseURL(url))
+	if err != nil {
+		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
+	}
+
+	// 构建合并选项
+	mrOpt := &gitlab.AcceptMergeRequestOptions{}
+
+	if mrMergeDeleteSource {
+		mrOpt.ShouldRemoveSourceBranch = gitlab.Ptr(true)
+	}
+
+	if mrMergeCommitMessage != "" {
+		mrOpt.MergeCommitMessage = gitlab.Ptr(mrMergeCommitMessage)
+	}
+
+	// 合并 Merge Request
+	mr, _, err := client.MergeRequests.AcceptMergeRequest(projectID, mrIID, mrOpt)
+	if err != nil {
+		return fmt.Errorf("合并 Merge Request 失败: %v", err)
+	}
+
+	// 打印合并结果
+	printMergeRequestDetails(mr)
+
+	return nil
+}
+
+func printMergeRequestsList(projectID string, mrs []*gitlab.BasicMergeRequest) {
+	fmt.Printf("项目: %s\n", projectID)
+	if len(mrs) == 0 {
+		fmt.Println("  未找到开放的 Merge Request")
+		return
+	}
+
+	fmt.Printf("  找到 %d 个开放的 Merge Request:\n\n", len(mrs))
+	for i, mr := range mrs {
+		fmt.Printf("  [%d] !%d: %s\n", i+1, mr.IID, mr.Title)
+		fmt.Printf("      源分支: %s -> 目标分支: %s\n", mr.SourceBranch, mr.TargetBranch)
+		fmt.Printf("      状态: %s\n", mr.State)
+		if mr.Author != nil {
+			fmt.Printf("      创建者: %s", mr.Author.Name)
+			if mr.Author.Username != "" {
+				fmt.Printf(" (@%s)", mr.Author.Username)
+			}
+			fmt.Println()
+		}
+		if mr.CreatedAt != nil {
+			fmt.Printf("      创建时间: %s\n", formatToLocalTime(mr.CreatedAt))
+		}
+		if mr.WebURL != "" {
+			fmt.Printf("      Web URL: %s\n", mr.WebURL)
+		}
+		fmt.Println()
+	}
+}
+
+func printMergeRequestDetails(mr *gitlab.MergeRequest) {
+	fmt.Println("Merge Request 已合并:")
+	fmt.Printf("  ID: %d\n", mr.IID)
+	fmt.Printf("  标题: %s\n", mr.Title)
+	if mr.Description != "" {
+		fmt.Printf("  描述: %s\n", mr.Description)
+	}
+	fmt.Printf("  源分支: %s\n", mr.SourceBranch)
+	fmt.Printf("  目标分支: %s\n", mr.TargetBranch)
+	fmt.Printf("  状态: %s\n", mr.State)
+	if mr.MergedAt != nil {
+		fmt.Printf("  合并时间: %s\n", formatToLocalTime(mr.MergedAt))
+	}
+	if mr.WebURL != "" {
+		fmt.Printf("  Web URL: %s\n", mr.WebURL)
+	}
 }
 
 func main() {
