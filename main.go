@@ -500,11 +500,46 @@ func runBranchDiffCmd(cmd *cobra.Command, args []string) error {
 			mrTitle = fmt.Sprintf("Merge %s into %s", targetBranch, sourceBranch)
 		}
 
+		// 检查是否已经存在相同源分支和目标分支的开放 MR
+		existingMRs, _, err := client.MergeRequests.ListProjectMergeRequests(projectID, &gitlab.ListProjectMergeRequestsOptions{
+			SourceBranch: gitlab.Ptr(targetBranch),
+			TargetBranch: gitlab.Ptr(sourceBranch),
+			State:        gitlab.Ptr("opened"),
+			ListOptions: gitlab.ListOptions{
+				PerPage: 10,
+				Page:    1,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("检查现有 Merge Request 失败: %v", err)
+		}
+
+		// 如果已存在开放的 MR，则提示并跳过创建
+		if len(existingMRs) > 0 {
+			fmt.Println()
+			fmt.Printf("提示: 源分支 %s 到目标分支 %s 已存在开放的 Merge Request:\n", targetBranch, sourceBranch)
+			for _, existingMR := range existingMRs {
+				fmt.Printf("  !%d: %s\n", existingMR.IID, existingMR.Title)
+				if existingMR.WebURL != "" {
+					fmt.Printf("      %s\n", existingMR.WebURL)
+				}
+			}
+			fmt.Println("跳过创建新的 Merge Request")
+			return nil
+		}
+
+		// 获取当前用户信息，用于设置 assignee
+		currentUser, _, err := client.Users.CurrentUser()
+		if err != nil {
+			return fmt.Errorf("获取当前用户信息失败: %v", err)
+		}
+
 		// 创建 Merge Request（从 targetBranch 合并到 sourceBranch）
 		mrOpt := &gitlab.CreateMergeRequestOptions{
 			Title:        gitlab.Ptr(mrTitle),
 			SourceBranch: gitlab.Ptr(targetBranch),
 			TargetBranch: gitlab.Ptr(sourceBranch),
+			AssigneeID:   gitlab.Ptr(currentUser.ID),
 		}
 
 		if branchDiffMRDescription != "" {
