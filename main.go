@@ -82,14 +82,39 @@ var projectGetCmd = &cobra.Command{
 	RunE: runProjectGetCmd,
 }
 
+var branchCmd = &cobra.Command{
+	Use:   "branch",
+	Short: "分支管理",
+	Long:  "查看和管理 GitLab 项目分支",
+}
+
+var branchListCmd = &cobra.Command{
+	Use:   "list [项目ID]",
+	Short: "列出项目分支",
+	Long:  "列出指定项目的分支列表，如果不指定项目 ID 则列出所有可访问项目的分支",
+	Example: `  gitlab-tools branch list
+  gitlab-tools branch list 123
+  gitlab-tools branch list my-group/my-project
+  gitlab-tools branch list --search "feature"
+  gitlab-tools branch list 123 --search "feature"
+  gitlab-tools branch list --hide-empty
+  gitlab-tools branch list --quiet
+  gitlab-tools branch list --quiet --hide-empty`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runBranchListCmd,
+}
+
 var (
-	projectOwned      bool
-	projectArchived   bool
-	projectSearch     string
-	projectMatch      string
-	projectLimit      int
-	projectGetDetail  bool
-	pipelineListLimit int
+	projectOwned        bool
+	projectArchived     bool
+	projectSearch       string
+	projectMatch        string
+	projectLimit        int
+	projectGetDetail    bool
+	pipelineListLimit   int
+	branchListSearch    string
+	branchListHideEmpty bool
+	branchListQuiet     bool
 )
 
 func init() {
@@ -127,13 +152,20 @@ func init() {
 	// project get 标志
 	projectGetCmd.Flags().BoolVar(&projectGetDetail, "detail", false, "使用详细格式（带颜色）显示完整的项目数据结构")
 
+	// branch list 标志
+	branchListCmd.Flags().StringVar(&branchListSearch, "search", "", "按分支名过滤（部分匹配，不区分大小写）")
+	branchListCmd.Flags().BoolVar(&branchListHideEmpty, "hide-empty", false, "如果没有分支则隐藏该项目")
+	branchListCmd.Flags().BoolVar(&branchListQuiet, "quiet", false, "只显示项目名")
+
 	// 添加子命令
 	rootCmd.AddCommand(pipelineCmd)
 	rootCmd.AddCommand(projectCmd)
+	rootCmd.AddCommand(branchCmd)
 	pipelineCmd.AddCommand(pipelineGetCmd)
 	pipelineCmd.AddCommand(pipelineListCmd)
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectGetCmd)
+	branchCmd.AddCommand(branchListCmd)
 }
 
 func initViper() {
@@ -289,6 +321,105 @@ func runProjectGetCmd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runBranchListCmd(cmd *cobra.Command, args []string) error {
+	// 获取配置
+	url := getGitLabURL()
+	token := getGitLabToken()
+	if token == "" {
+		return fmt.Errorf("错误: 请设置 GITLAB_TOKEN 环境变量或使用 --token 标志")
+	}
+
+	// 创建 GitLab 客户端
+	client, err := gitlab.NewClient(token, gitlab.WithBaseURL(url))
+	if err != nil {
+		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
+	}
+
+	// 获取搜索参数
+	search := branchListSearch
+
+	// 检查是否提供了项目 ID
+	if len(args) > 0 && args[0] != "" {
+		// 指定了项目 ID，只获取该项目的分支
+		projectID := args[0]
+		branches, _, err := client.Branches.ListBranches(projectID, nil)
+		if err != nil {
+			return fmt.Errorf("获取项目 %s 的分支列表失败: %v", projectID, err)
+		}
+
+		// 应用搜索过滤
+		if search != "" {
+			branches = filterBranchesBySearch(branches, search)
+		}
+
+		// 如果启用 --hide-empty 且没有分支，则跳过
+		if branchListHideEmpty && len(branches) == 0 {
+			return nil
+		}
+
+		// 打印分支信息
+		printBranchesList(projectID, branches, true, branchListQuiet)
+	} else {
+		// 未指定项目 ID，获取所有项目的分支
+		opt := &gitlab.ListProjectsOptions{
+			ListOptions: gitlab.ListOptions{
+				PerPage: 100,
+				Page:    1,
+			},
+		}
+
+		projects, _, err := client.Projects.ListProjects(opt)
+		if err != nil {
+			return fmt.Errorf("获取项目列表失败: %v", err)
+		}
+
+		if len(projects) == 0 {
+			fmt.Println("未找到项目")
+			return nil
+		}
+
+		// 为每个项目获取分支
+		for i, project := range projects {
+
+			branches, _, err := client.Branches.ListBranches(project.PathWithNamespace, nil)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "获取项目 %s 的分支列表失败: %v\n", project.PathWithNamespace, err)
+				continue
+			}
+
+			// 应用搜索过滤
+			if search != "" {
+				branches = filterBranchesBySearch(branches, search)
+			}
+
+			// 如果启用 --hide-empty 且没有分支，则跳过该项目
+			if branchListHideEmpty && len(branches) == 0 {
+				continue
+			}
+
+			if i > 0 && !branchListQuiet {
+				fmt.Println() // 项目之间添加空行（quiet 模式下不需要）
+			}
+
+			// 打印分支信息
+			printBranchesList(project.PathWithNamespace, branches, false, branchListQuiet)
+		}
+	}
+
+	return nil
+}
+
+func filterBranchesBySearch(branches []*gitlab.Branch, searchTerm string) []*gitlab.Branch {
+	searchLower := strings.ToLower(searchTerm)
+	var filtered []*gitlab.Branch
+	for _, branch := range branches {
+		if strings.Contains(strings.ToLower(branch.Name), searchLower) {
+			filtered = append(filtered, branch)
+		}
+	}
+	return filtered
+}
+
 func runProjectListCmd(cmd *cobra.Command, args []string) error {
 	// 获取配置
 	url := getGitLabURL()
@@ -432,6 +563,65 @@ func printProjectsList(projects []*gitlab.Project) {
 		}
 		if project.LastActivityAt != nil {
 			fmt.Printf("    最后活动: %s\n", formatToLocalTime(project.LastActivityAt))
+		}
+		fmt.Println()
+	}
+}
+
+func printBranchesList(projectID string, branches []*gitlab.Branch, singleProject bool, quiet bool) {
+	if quiet {
+		// quiet 模式：只显示项目名
+		if len(branches) > 0 {
+			fmt.Println(projectID)
+		}
+		return
+	}
+
+	if singleProject {
+		fmt.Printf("项目: %s\n", projectID)
+	} else {
+		fmt.Printf("项目: %s\n", projectID)
+	}
+
+	if len(branches) == 0 {
+		fmt.Println("  未找到分支")
+		return
+	}
+
+	fmt.Printf("  找到 %d 个分支:\n\n", len(branches))
+	for i, branch := range branches {
+		fmt.Printf("  [%d] %s", i+1, branch.Name)
+		if branch.Protected {
+			fmt.Printf(" (受保护)")
+		}
+		if branch.Default {
+			fmt.Printf(" (默认分支)")
+		}
+		fmt.Println()
+
+		if branch.Commit != nil {
+			sha := branch.Commit.ID
+			if len(sha) > 8 {
+				sha = sha[:8]
+			}
+			fmt.Printf("      最后提交: %s\n", sha)
+			if branch.Commit.Message != "" {
+				// 只显示提交信息的第一行
+				message := strings.Split(branch.Commit.Message, "\n")[0]
+				if len(message) > 60 {
+					message = message[:60] + "..."
+				}
+				fmt.Printf("      提交信息: %s\n", message)
+			}
+			if branch.Commit.CommittedDate != nil {
+				fmt.Printf("      提交时间: %s\n", formatToLocalTime(branch.Commit.CommittedDate))
+			}
+			if branch.Commit.AuthorName != "" {
+				fmt.Printf("      提交者: %s\n", branch.Commit.AuthorName)
+			}
+			if branch.Commit.AuthorEmail != "" {
+				fmt.Printf("      提交者邮箱: %s\n", branch.Commit.AuthorEmail)
+			}
 		}
 		fmt.Println()
 	}
