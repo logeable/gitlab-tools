@@ -48,7 +48,9 @@ var pipelineListCmd = &cobra.Command{
 	Example: `  gitlab-tools pipeline list 123
   gitlab-tools pipeline list 123 456 789
   gitlab-tools pipeline list my-group/my-project
-  gitlab-tools pipeline list 123 --limit 10`,
+  gitlab-tools pipeline list 123 --limit 10
+  gitlab-tools pipeline list 123 --status success
+  gitlab-tools pipeline list 123 --status failed --limit 10`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runPipelineListCmd,
 }
@@ -214,6 +216,7 @@ var (
 	projectLimit         int
 	projectGetDetail     bool
 	pipelineListLimit    int
+	pipelineListStatus   string
 	branchListSearch     string
 	branchListHideEmpty  bool
 	branchListQuiet      bool
@@ -257,9 +260,11 @@ func init() {
 
 	// pipeline list 标志
 	pipelineListCmd.Flags().IntVar(&pipelineListLimit, "limit", 5, "每个项目显示的 pipeline 数量")
+	pipelineListCmd.Flags().StringVar(&pipelineListStatus, "status", "", "按状态过滤 Pipeline (running, pending, success, failed, canceled, skipped, created, manual)")
 
 	// 绑定 pipeline list 标志到 Viper
 	viper.BindPFlag("pipeline.list.limit", pipelineListCmd.Flags().Lookup("limit"))
+	viper.BindPFlag("pipeline.list.status", pipelineListCmd.Flags().Lookup("status"))
 
 	// project get 标志
 	projectGetCmd.Flags().BoolVar(&projectGetDetail, "detail", false, "使用详细格式（带颜色）显示完整的项目数据结构")
@@ -404,7 +409,30 @@ func runPipelineListCmd(cmd *cobra.Command, args []string) error {
 			Sort:    gitlab.Ptr("desc"),
 		}
 
-		client.Pipelines.GetPipeline(projectID, 1)
+		// 如果指定了 --status 参数，设置状态过滤
+		status := viper.GetString("pipeline.list.status")
+		if status == "" {
+			status = pipelineListStatus
+		}
+		if status != "" {
+			// 验证状态值（GitLab API 支持的状态值）
+			validStatuses := map[string]bool{
+				"running":  true,
+				"pending":  true,
+				"success":  true,
+				"failed":   true,
+				"canceled": true,
+				"skipped":  true,
+				"created":  true,
+				"manual":   true,
+			}
+			if !validStatuses[status] {
+				return fmt.Errorf("无效的状态值: %s。支持的状态值: running, pending, success, failed, canceled, skipped, created, manual", status)
+			}
+			statusValue := gitlab.BuildStateValue(status)
+			opt.Status = &statusValue
+		}
+
 		// 获取 pipeline 列表
 		pipelines, _, err := client.Pipelines.ListProjectPipelines(projectID, opt)
 		if err != nil {
@@ -412,8 +440,19 @@ func runPipelineListCmd(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		// 打印项目 pipelines
-		printProjectPipelines(projectID, pipelines)
+		fmt.Printf("项目: %s\n", projectID)
+		fmt.Printf("  找到 %d 条 pipeline:\n\n", len(pipelines))
+		for i, pipeline := range pipelines {
+			pipeline, _, err := client.Pipelines.GetPipeline(projectID, pipeline.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "获取项目 %s 的 pipeline %d 失败: %v\n", projectID, pipeline.ID, err)
+				continue
+			}
+			if i > 0 {
+				fmt.Println()
+			}
+			printPipelineInfo(pipeline)
+		}
 	}
 
 	return nil
@@ -904,38 +943,6 @@ func printBranchesList(projectID string, branches []*gitlab.Branch, singleProjec
 	}
 }
 
-func printProjectPipelines(projectID string, pipelines []*gitlab.PipelineInfo) {
-	fmt.Printf("项目: %s\n", projectID)
-	if len(pipelines) == 0 {
-		fmt.Println("  未找到 pipeline")
-		return
-	}
-
-	fmt.Printf("  找到 %d 条 pipeline:\n\n", len(pipelines))
-	for i, pipeline := range pipelines {
-		fmt.Printf("  [%d] Pipeline #%d (IID: %d)\n", i+1, pipeline.ID, pipeline.IID)
-		fmt.Printf("      状态: %s\n", pipeline.Status)
-		fmt.Printf("      引用: %s\n", pipeline.Ref)
-		sha := pipeline.SHA
-		if len(sha) > 8 {
-			sha = sha[:8]
-		}
-		fmt.Printf("      SHA: %s\n", sha)
-		fmt.Printf("      源: %s\n", pipeline.Source)
-		if pipeline.Name != "" {
-			fmt.Printf("      名称: %s\n", pipeline.Name)
-		}
-		if pipeline.CreatedAt != nil {
-			fmt.Printf("      创建时间: %s\n", formatToLocalTime(pipeline.CreatedAt))
-		}
-		if pipeline.UpdatedAt != nil {
-			fmt.Printf("      更新时间: %s\n", formatToLocalTime(pipeline.UpdatedAt))
-		}
-		fmt.Printf("      Web URL: %s\n", pipeline.WebURL)
-		fmt.Println()
-	}
-}
-
 func printPipelineInfo(pipeline *gitlab.Pipeline) {
 	fmt.Printf("Pipeline 信息:\n")
 	fmt.Printf("  ID: %d\n", pipeline.ID)
@@ -945,6 +952,7 @@ func printPipelineInfo(pipeline *gitlab.Pipeline) {
 	fmt.Printf("  创建时间: %s\n", formatToLocalTime(pipeline.CreatedAt))
 	fmt.Printf("  更新时间: %s\n", formatToLocalTime(pipeline.UpdatedAt))
 	fmt.Printf("  源: %s\n", pipeline.Source)
+	fmt.Printf("  是否为 tag: %t\n", pipeline.Tag)
 	fmt.Printf("  Web URL: %s\n", pipeline.WebURL)
 
 	if pipeline.Duration > 0 {
