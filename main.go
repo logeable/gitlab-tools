@@ -132,6 +132,45 @@ var mrCmd = &cobra.Command{
 	Long:  "查看和管理 GitLab Merge Request",
 }
 
+var tagCmd = &cobra.Command{
+	Use:   "tag",
+	Short: "Tag 管理",
+	Long:  "查看和管理 GitLab 项目标签",
+}
+
+var tagListCmd = &cobra.Command{
+	Use:   "list <项目ID>",
+	Short: "列出项目的标签",
+	Long:  "列出指定项目的所有标签列表",
+	Example: `  gitlab-tools tag list 123
+  gitlab-tools tag list my-group/my-project`,
+	Args: cobra.ExactArgs(1),
+	RunE: runTagListCmd,
+}
+
+var tagCreateCmd = &cobra.Command{
+	Use:   "create <项目ID> <标签名>",
+	Short: "创建标签",
+	Long:  "在指定项目上创建标签，默认在 main 分支上创建",
+	Example: `  gitlab-tools tag create 123 v1.0.0
+  gitlab-tools tag create my-group/my-project v1.0.0
+  gitlab-tools tag create 123 v1.0.0 --branch develop
+  gitlab-tools tag create 123 v1.0.0 --ref abc123
+  gitlab-tools tag create 123 v1.0.0 --message "版本 1.0.0"`,
+	Args: cobra.ExactArgs(2),
+	RunE: runTagCreateCmd,
+}
+
+var tagDeleteCmd = &cobra.Command{
+	Use:   "delete <项目ID> <标签名>",
+	Short: "删除标签",
+	Long:  "删除指定项目的标签",
+	Example: `  gitlab-tools tag delete 123 v1.0.0
+  gitlab-tools tag delete my-group/my-project v1.0.0`,
+	Args: cobra.ExactArgs(2),
+	RunE: runTagDeleteCmd,
+}
+
 var mrListCmd = &cobra.Command{
 	Use:   "list <项目ID>",
 	Short: "列出项目的开放 Merge Request",
@@ -185,6 +224,9 @@ var (
 	mrCreateQuiet        bool
 	mrMergeDeleteSource  bool
 	mrMergeCommitMessage string
+	tagCreateBranch      string
+	tagCreateRef         string
+	tagCreateMessage     string
 )
 
 func init() {
@@ -240,11 +282,17 @@ func init() {
 	mrMergeCmd.Flags().BoolVar(&mrMergeDeleteSource, "delete-source-branch", false, "合并后删除源分支")
 	mrMergeCmd.Flags().StringVar(&mrMergeCommitMessage, "merge-commit-message", "", "自定义合并提交信息")
 
+	// tag create 标志
+	tagCreateCmd.Flags().StringVar(&tagCreateBranch, "branch", "main", "指定目标分支（默认: main）")
+	tagCreateCmd.Flags().StringVar(&tagCreateRef, "ref", "", "指定具体的提交 SHA 或分支名（可选，默认使用分支的最新提交）")
+	tagCreateCmd.Flags().StringVar(&tagCreateMessage, "message", "", "指定标签消息（可选）")
+
 	// 添加子命令
 	rootCmd.AddCommand(pipelineCmd)
 	rootCmd.AddCommand(projectCmd)
 	rootCmd.AddCommand(branchCmd)
 	rootCmd.AddCommand(mrCmd)
+	rootCmd.AddCommand(tagCmd)
 	pipelineCmd.AddCommand(pipelineGetCmd)
 	pipelineCmd.AddCommand(pipelineListCmd)
 	projectCmd.AddCommand(projectListCmd)
@@ -254,6 +302,9 @@ func init() {
 	mrCmd.AddCommand(mrListCmd)
 	mrCmd.AddCommand(mrCreateCmd)
 	mrCmd.AddCommand(mrMergeCmd)
+	tagCmd.AddCommand(tagListCmd)
+	tagCmd.AddCommand(tagCreateCmd)
+	tagCmd.AddCommand(tagDeleteCmd)
 }
 
 func initViper() {
@@ -353,6 +404,7 @@ func runPipelineListCmd(cmd *cobra.Command, args []string) error {
 			Sort:    gitlab.Ptr("desc"),
 		}
 
+		client.Pipelines.GetPipeline(projectID, 1)
 		// 获取 pipeline 列表
 		pipelines, _, err := client.Pipelines.ListProjectPipelines(projectID, opt)
 		if err != nil {
@@ -1220,6 +1272,178 @@ func printMergeRequestDetails(mr *gitlab.MergeRequest) {
 	if mr.WebURL != "" {
 		fmt.Printf("  Web URL: %s\n", mr.WebURL)
 	}
+}
+
+func runTagListCmd(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+
+	// 获取配置
+	url := getGitLabURL()
+	token := getGitLabToken()
+	if token == "" {
+		return fmt.Errorf("错误: 请设置 GITLAB_TOKEN 环境变量或使用 --token 标志")
+	}
+
+	// 创建 GitLab 客户端
+	client, err := gitlab.NewClient(token, gitlab.WithBaseURL(url))
+	if err != nil {
+		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
+	}
+
+	// 获取标签列表
+	tags, _, err := client.Tags.ListTags(projectID, nil)
+	if err != nil {
+		return fmt.Errorf("获取项目 %s 的标签列表失败: %v", projectID, err)
+	}
+
+	// 打印标签列表
+	printTagsList(projectID, tags)
+
+	return nil
+}
+
+func runTagCreateCmd(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+	tagName := args[1]
+
+	// 获取配置
+	url := getGitLabURL()
+	token := getGitLabToken()
+	if token == "" {
+		return fmt.Errorf("错误: 请设置 GITLAB_TOKEN 环境变量或使用 --token 标志")
+	}
+
+	// 创建 GitLab 客户端
+	client, err := gitlab.NewClient(token, gitlab.WithBaseURL(url))
+	if err != nil {
+		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
+	}
+
+	// 获取分支参数（默认值为 "main"）
+	branch := tagCreateBranch
+	if branch == "" {
+		branch = "main"
+	}
+
+	// 确定 ref（如果指定了 --ref 则使用该值，否则使用分支名）
+	ref := tagCreateRef
+	if ref == "" {
+		ref = branch
+	}
+
+	// 构建创建标签选项
+	tagOpt := &gitlab.CreateTagOptions{
+		TagName: gitlab.Ptr(tagName),
+		Ref:     gitlab.Ptr(ref),
+	}
+
+	if tagCreateMessage != "" {
+		tagOpt.Message = gitlab.Ptr(tagCreateMessage)
+	}
+
+	// 创建标签
+	tag, _, err := client.Tags.CreateTag(projectID, tagOpt)
+	if err != nil {
+		return fmt.Errorf("创建标签失败: %v", err)
+	}
+
+	// 打印标签信息
+	printTagInfo(tag)
+
+	return nil
+}
+
+func printTagsList(projectID string, tags []*gitlab.Tag) {
+	fmt.Printf("项目: %s\n", projectID)
+	if len(tags) == 0 {
+		fmt.Println("  未找到标签")
+		return
+	}
+
+	fmt.Printf("  找到 %d 个标签:\n\n", len(tags))
+	for i, tag := range tags {
+		fmt.Printf("  [%d] %s\n", i+1, tag.Name)
+		if tag.Commit != nil {
+			sha := tag.Commit.ID
+			if len(sha) > 8 {
+				sha = sha[:8]
+			}
+			fmt.Printf("      提交: %s\n", sha)
+			if tag.Commit.Message != "" {
+				message := strings.Split(tag.Commit.Message, "\n")[0]
+				if len(message) > 60 {
+					message = message[:60] + "..."
+				}
+				fmt.Printf("      提交信息: %s\n", message)
+			}
+			if tag.Commit.CommittedDate != nil {
+				fmt.Printf("      提交时间: %s\n", formatToLocalTime(tag.Commit.CommittedDate))
+			}
+			if tag.Commit.AuthorName != "" {
+				fmt.Printf("      提交者: %s\n", tag.Commit.AuthorName)
+			}
+		}
+		if tag.Message != "" {
+			fmt.Printf("      标签消息: %s\n", tag.Message)
+		}
+		if tag.Release != nil && tag.Release.Description != "" {
+			fmt.Printf("      发布说明: %s\n", tag.Release.Description)
+		}
+		fmt.Println()
+	}
+}
+
+func printTagInfo(tag *gitlab.Tag) {
+	fmt.Println()
+	fmt.Println("标签已创建:")
+	fmt.Printf("  标签名: %s\n", tag.Name)
+	if tag.Commit != nil {
+		fmt.Printf("  提交: %s\n", tag.Commit.ID)
+		if tag.Commit.Message != "" {
+			message := strings.Split(tag.Commit.Message, "\n")[0]
+			if len(message) > 80 {
+				message = message[:80] + "..."
+			}
+			fmt.Printf("  提交信息: %s\n", message)
+		}
+		if tag.Commit.CommittedDate != nil {
+			fmt.Printf("  提交时间: %s\n", formatToLocalTime(tag.Commit.CommittedDate))
+		}
+		if tag.Commit.AuthorName != "" {
+			fmt.Printf("  提交者: %s\n", tag.Commit.AuthorName)
+		}
+	}
+	if tag.Message != "" {
+		fmt.Printf("  标签消息: %s\n", tag.Message)
+	}
+}
+
+func runTagDeleteCmd(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+	tagName := args[1]
+
+	// 获取配置
+	url := getGitLabURL()
+	token := getGitLabToken()
+	if token == "" {
+		return fmt.Errorf("错误: 请设置 GITLAB_TOKEN 环境变量或使用 --token 标志")
+	}
+
+	// 创建 GitLab 客户端
+	client, err := gitlab.NewClient(token, gitlab.WithBaseURL(url))
+	if err != nil {
+		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
+	}
+
+	// 删除标签
+	_, err = client.Tags.DeleteTag(projectID, tagName)
+	if err != nil {
+		return fmt.Errorf("删除标签失败: %v", err)
+	}
+
+	fmt.Printf("标签 %s 已删除\n", tagName)
+
+	return nil
 }
 
 func main() {
