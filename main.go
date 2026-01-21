@@ -46,12 +46,12 @@ var pipelineListCmd = &cobra.Command{
 	Short: "列出项目的 pipelines",
 	Long:  "列出指定项目的 pipeline 列表，每个项目显示最近的几条",
 	Example: `  gitlab-tools pipeline list 123
-  gitlab-tools pipeline list 123 456 789
+  gitlab-tools pipeline list 123
   gitlab-tools pipeline list my-group/my-project
   gitlab-tools pipeline list 123 --limit 10
   gitlab-tools pipeline list 123 --status success
-  gitlab-tools pipeline list 123 --status failed --limit 10`,
-	Args: cobra.MinimumNArgs(1),
+  gitlab-tools pipeline list 123 --ref main`,
+	Args: cobra.ExactArgs(1),
 	RunE: runPipelineListCmd,
 }
 
@@ -178,7 +178,12 @@ var mrListCmd = &cobra.Command{
 	Short: "列出项目的开放 Merge Request",
 	Long:  "列出指定项目的所有开放 Merge Request 列表",
 	Example: `  gitlab-tools mr list 123
-  gitlab-tools mr list my-group/my-project`,
+  gitlab-tools mr list my-group/my-project
+  gitlab-tools mr list my-group/my-project --target-branch feature
+  gitlab-tools mr list my-group/my-project --state opened
+  gitlab-tools mr list my-group/my-project --state closed
+  gitlab-tools mr list my-group/my-project --state merged
+  gitlab-tools mr list my-group/my-project --with-pipelines`,
 	Args: cobra.ExactArgs(1),
 	RunE: runMRListCmd,
 }
@@ -227,9 +232,13 @@ var (
 	mrCreateQuiet        bool
 	mrMergeDeleteSource  bool
 	mrMergeCommitMessage string
+	mrListTargetBranch   string
+	mrListState          string
+	mrListWithPipelines  bool
 	tagCreateBranch      string
 	tagCreateRef         string
 	tagCreateMessage     string
+	pipelineListRef      string
 )
 
 func init() {
@@ -287,10 +296,18 @@ func init() {
 	mrMergeCmd.Flags().BoolVar(&mrMergeDeleteSource, "delete-source-branch", false, "合并后删除源分支")
 	mrMergeCmd.Flags().StringVar(&mrMergeCommitMessage, "merge-commit-message", "", "自定义合并提交信息")
 
+	// mr list 标志
+	mrListCmd.Flags().StringVar(&mrListTargetBranch, "target-branch", "", "按目标分支过滤 Merge Request")
+	mrListCmd.Flags().StringVar(&mrListState, "state", "", "按状态过滤 Merge Request (opened, closed, merged)")
+	mrListCmd.Flags().BoolVar(&mrListWithPipelines, "with-pipelines", false, "显示 Merge Request 的 pipelines")
+
 	// tag create 标志
 	tagCreateCmd.Flags().StringVar(&tagCreateBranch, "branch", "main", "指定目标分支（默认: main）")
 	tagCreateCmd.Flags().StringVar(&tagCreateRef, "ref", "", "指定具体的提交 SHA 或分支名（可选，默认使用分支的最新提交）")
 	tagCreateCmd.Flags().StringVar(&tagCreateMessage, "message", "", "指定标签消息（可选）")
+
+	// pipeline list 标志
+	pipelineListCmd.Flags().StringVar(&pipelineListRef, "ref", "", "按 ref 过滤 Pipeline")
 
 	// 添加子命令
 	rootCmd.AddCommand(pipelineCmd)
@@ -365,6 +382,8 @@ func runPipelineGetCmd(cmd *cobra.Command, args []string) error {
 }
 
 func runPipelineListCmd(cmd *cobra.Command, args []string) error {
+	projectID := args[0]
+
 	// 获取配置
 	url := getGitLabURL()
 	token := getGitLabToken()
@@ -390,69 +409,62 @@ func runPipelineListCmd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// 获取项目 ID 列表
-	projectIDs := args
+	// 构建查询选项
+	opt := &gitlab.ListProjectPipelinesOptions{
+		ListOptions: gitlab.ListOptions{
+			PerPage: limit,
+			Page:    1,
+		},
+		OrderBy: gitlab.Ptr("updated_at"),
+		Sort:    gitlab.Ptr("desc"),
+	}
 
-	// 为每个项目获取 pipeline 列表
-	for i, projectID := range projectIDs {
-		if i > 0 {
-			fmt.Println() // 项目之间添加空行
+	// 如果指定了 --status 参数，设置状态过滤
+	status := viper.GetString("pipeline.list.status")
+	if status == "" {
+		status = pipelineListStatus
+	}
+	if status != "" {
+		// 验证状态值（GitLab API 支持的状态值）
+		validStatuses := map[string]bool{
+			"running":  true,
+			"pending":  true,
+			"success":  true,
+			"failed":   true,
+			"canceled": true,
+			"skipped":  true,
+			"created":  true,
+			"manual":   true,
 		}
+		if !validStatuses[status] {
+			return fmt.Errorf("无效的状态值: %s。支持的状态值: running, pending, success, failed, canceled, skipped, created, manual", status)
+		}
+		statusValue := gitlab.BuildStateValue(status)
+		opt.Status = &statusValue
+	}
 
-		// 构建查询选项
-		opt := &gitlab.ListProjectPipelinesOptions{
-			ListOptions: gitlab.ListOptions{
-				PerPage: limit,
-				Page:    1,
-			},
-			OrderBy: gitlab.Ptr("updated_at"),
-			Sort:    gitlab.Ptr("desc"),
-		}
+	if pipelineListRef != "" {
+		opt.Ref = &pipelineListRef
+	}
 
-		// 如果指定了 --status 参数，设置状态过滤
-		status := viper.GetString("pipeline.list.status")
-		if status == "" {
-			status = pipelineListStatus
-		}
-		if status != "" {
-			// 验证状态值（GitLab API 支持的状态值）
-			validStatuses := map[string]bool{
-				"running":  true,
-				"pending":  true,
-				"success":  true,
-				"failed":   true,
-				"canceled": true,
-				"skipped":  true,
-				"created":  true,
-				"manual":   true,
-			}
-			if !validStatuses[status] {
-				return fmt.Errorf("无效的状态值: %s。支持的状态值: running, pending, success, failed, canceled, skipped, created, manual", status)
-			}
-			statusValue := gitlab.BuildStateValue(status)
-			opt.Status = &statusValue
-		}
+	// 获取 pipeline 列表
+	pipelines, _, err := client.Pipelines.ListProjectPipelines(projectID, opt)
+	if err != nil {
+		return fmt.Errorf("获取项目 %s 的 pipeline 列表失败: %v", projectID, err)
+	}
 
-		// 获取 pipeline 列表
-		pipelines, _, err := client.Pipelines.ListProjectPipelines(projectID, opt)
+	fmt.Printf("项目: %s\n", projectID)
+	fmt.Printf("  找到 %d 条 pipeline:\n\n", len(pipelines))
+	for i, pipeline := range pipelines {
+		pipeline, _, err := client.Pipelines.GetPipeline(projectID, pipeline.ID)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "获取项目 %s 的 pipeline 列表失败: %v\n", projectID, err)
+			fmt.Fprintf(os.Stderr, "获取项目 %s 的 pipeline %d 失败: %v\n", projectID, pipeline.ID, err)
 			continue
 		}
-
-		fmt.Printf("项目: %s\n", projectID)
-		fmt.Printf("  找到 %d 条 pipeline:\n\n", len(pipelines))
-		for i, pipeline := range pipelines {
-			pipeline, _, err := client.Pipelines.GetPipeline(projectID, pipeline.ID)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "获取项目 %s 的 pipeline %d 失败: %v\n", projectID, pipeline.ID, err)
-				continue
-			}
-			if i > 0 {
-				fmt.Println()
-			}
-			printPipelineInfo(pipeline)
+		if i > 0 {
+			fmt.Println()
 		}
+		printPipelineInfo(pipeline)
 	}
 
 	return nil
@@ -653,12 +665,9 @@ func runMRCreateCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("获取分支差异失败: %v", err)
 	}
 
-	// 检查是否有差异：如果没有提交差异且没有文件差异，则不创建 MR
-	hasCommits := len(compare.Commits) > 0
-	hasDiffs := len(compare.Diffs) > 0
-
-	if !hasCommits && !hasDiffs {
-		fmt.Println("提示: 两个分支之间没有差异，跳过创建 Merge Request")
+	// 检查是否有差异：如果没有文件差异，则不创建 MR
+	if len(compare.Diffs) == 0 {
+		fmt.Println("提示: 两个分支之间没有文件差异，跳过创建 Merge Request")
 		return nil
 	}
 
@@ -1168,13 +1177,23 @@ func runMRListCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("创建 GitLab 客户端失败: %v", err)
 	}
 
-	// 构建查询选项，只查询开放的 MR
+	var targetBranch *string
+	if mrListTargetBranch != "" {
+		targetBranch = &mrListTargetBranch
+	}
+
+	var state *string
+	if mrListState != "" {
+		state = &mrListState
+	}
+
 	opt := &gitlab.ListProjectMergeRequestsOptions{
-		State: gitlab.Ptr("opened"),
+		State: state,
 		ListOptions: gitlab.ListOptions{
 			PerPage: 100,
 			Page:    1,
 		},
+		TargetBranch: targetBranch,
 	}
 
 	// 获取 Merge Request 列表
@@ -1184,7 +1203,48 @@ func runMRListCmd(cmd *cobra.Command, args []string) error {
 	}
 
 	// 打印 Merge Request 列表
-	printMergeRequestsList(projectID, mrs)
+	fmt.Printf("项目: %s\n", projectID)
+	if len(mrs) == 0 {
+		fmt.Println("  未找到 Merge Request")
+		return nil
+	}
+
+	fmt.Printf("  找到 %d 个 Merge Request:\n\n", len(mrs))
+	for i, mr := range mrs {
+		fmt.Printf("  [%d] !%d: %s\n", i+1, mr.IID, mr.Title)
+		fmt.Printf("      源分支: %s -> 目标分支: %s\n", mr.SourceBranch, mr.TargetBranch)
+		fmt.Printf("      状态: %s\n", mr.State)
+		fmt.Printf("      合并状态: %s\n", mr.DetailedMergeStatus)
+		if mr.Author != nil {
+			fmt.Printf("      创建者: %s", mr.Author.Name)
+			if mr.Author.Username != "" {
+				fmt.Printf(" (@%s)", mr.Author.Username)
+			}
+			fmt.Println()
+		}
+		if mr.CreatedAt != nil {
+			fmt.Printf("      创建时间: %s\n", formatToLocalTime(mr.CreatedAt))
+		}
+		if mr.WebURL != "" {
+			fmt.Printf("      Web URL: %s\n", mr.WebURL)
+		}
+
+		if mrListWithPipelines {
+			pipelines, _, err := client.MergeRequests.ListMergeRequestPipelines(projectID, mr.IID)
+			if err != nil {
+				return fmt.Errorf("获取 Merge Request %d 的 pipelines 失败: %v", mr.IID, err)
+			}
+			for _, pipeline := range pipelines {
+				pipeline, _, err := client.Pipelines.GetPipeline(projectID, pipeline.ID)
+				if err != nil {
+					return fmt.Errorf("获取 pipeline %d 失败: %v", pipeline.ID, err)
+				}
+				printPipelineInfo(pipeline)
+				fmt.Println()
+			}
+		}
+		fmt.Println()
+	}
 
 	return nil
 }
@@ -1233,35 +1293,6 @@ func runMRMergeCmd(cmd *cobra.Command, args []string) error {
 	printMergeRequestDetails(mr)
 
 	return nil
-}
-
-func printMergeRequestsList(projectID string, mrs []*gitlab.BasicMergeRequest) {
-	fmt.Printf("项目: %s\n", projectID)
-	if len(mrs) == 0 {
-		fmt.Println("  未找到开放的 Merge Request")
-		return
-	}
-
-	fmt.Printf("  找到 %d 个开放的 Merge Request:\n\n", len(mrs))
-	for i, mr := range mrs {
-		fmt.Printf("  [%d] !%d: %s\n", i+1, mr.IID, mr.Title)
-		fmt.Printf("      源分支: %s -> 目标分支: %s\n", mr.SourceBranch, mr.TargetBranch)
-		fmt.Printf("      状态: %s\n", mr.State)
-		if mr.Author != nil {
-			fmt.Printf("      创建者: %s", mr.Author.Name)
-			if mr.Author.Username != "" {
-				fmt.Printf(" (@%s)", mr.Author.Username)
-			}
-			fmt.Println()
-		}
-		if mr.CreatedAt != nil {
-			fmt.Printf("      创建时间: %s\n", formatToLocalTime(mr.CreatedAt))
-		}
-		if mr.WebURL != "" {
-			fmt.Printf("      Web URL: %s\n", mr.WebURL)
-		}
-		fmt.Println()
-	}
 }
 
 func printMergeRequestDetails(mr *gitlab.MergeRequest) {
