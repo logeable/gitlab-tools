@@ -1,0 +1,69 @@
+package project
+
+import (
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+)
+
+var (
+	projectOwned     bool
+	projectArchived  bool
+	projectSearch    string
+	projectMatch     string
+	projectLimit     int
+	projectGetDetail bool
+)
+
+// NewCommand 创建并返回 project 命令组
+func NewCommand() *cobra.Command {
+	projectCmd := &cobra.Command{
+		Use:   "project",
+		Short: "项目管理",
+		Long:  "查看和管理 GitLab 项目",
+	}
+
+	projectListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "列出项目",
+		Long:  "列出可访问的项目列表，显示基本信息",
+		Example: `  gitlab-tools project list
+  gitlab-tools project list --owned
+  gitlab-tools project list --search "my-project"
+  gitlab-tools project list --match ".*backend.*"
+  gitlab-tools project list --match "^my-group/.*"`,
+		RunE: runListCmd,
+	}
+
+	projectGetCmd := &cobra.Command{
+		Use:   "get <项目ID>",
+		Short: "获取项目详细信息",
+		Long:  "获取指定项目的详细信息",
+		Example: `  gitlab-tools project get 123
+  gitlab-tools project get my-group/my-project
+  gitlab-tools project get 123 --detail`,
+		Args: cobra.ExactArgs(1),
+		RunE: runGetCmd,
+	}
+
+	// project list 标志
+	projectListCmd.Flags().BoolVar(&projectOwned, "owned", false, "只显示拥有的项目")
+	projectListCmd.Flags().BoolVar(&projectArchived, "archived", false, "包含已归档的项目")
+	projectListCmd.Flags().StringVar(&projectSearch, "search", "", "搜索项目名称或描述")
+	projectListCmd.Flags().StringVar(&projectMatch, "match", "", "使用正则表达式匹配项目路径或名称")
+	projectListCmd.Flags().IntVar(&projectLimit, "limit", 20, "限制返回的项目数量")
+
+	// 绑定 project list 标志到 Viper
+	viper.BindPFlag("project.owned", projectListCmd.Flags().Lookup("owned"))
+	viper.BindPFlag("project.archived", projectListCmd.Flags().Lookup("archived"))
+	viper.BindPFlag("project.search", projectListCmd.Flags().Lookup("search"))
+	viper.BindPFlag("project.match", projectListCmd.Flags().Lookup("match"))
+	viper.BindPFlag("project.limit", projectListCmd.Flags().Lookup("limit"))
+
+	// project get 标志
+	projectGetCmd.Flags().BoolVar(&projectGetDetail, "detail", false, "使用详细格式（带颜色）显示完整的项目数据结构")
+
+	projectCmd.AddCommand(projectListCmd)
+	projectCmd.AddCommand(projectGetCmd)
+
+	return projectCmd
+}

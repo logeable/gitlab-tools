@@ -24,11 +24,19 @@
 - 命令行帮助信息使用中文
 
 ### Architecture Patterns
-- **单一文件架构**：当前所有功能集中在 `main.go` 文件中
+- **模块化包结构**：代码按功能模块组织到独立的包中
+  - `internal/client`：GitLab 客户端创建和管理
+  - `internal/config`：配置管理（Viper 相关）
+  - `internal/pipeline`：Pipeline 相关命令和逻辑
+  - `internal/project`：Project 相关命令和逻辑
+  - `internal/branch`：Branch 相关命令和逻辑
+  - `internal/mr`：Merge Request 相关命令和逻辑
+  - `internal/tag`：Tag 相关命令和逻辑
+  - `internal/output`：共享的输出格式化函数
 - **命令结构**：使用 Cobra 构建层次化命令结构
   - 根命令：`gitlab-tools`
-  - 子命令：`pipeline`、`project`
-  - 子子命令：`pipeline get`、`pipeline list`、`project list`
+  - 子命令：`pipeline`、`project`、`branch`、`mr`、`tag`
+  - 子子命令：`pipeline get`、`pipeline list`、`project list` 等
 - **配置管理**：使用 Viper 统一管理配置，优先级为：命令行参数 > 环境变量 > 默认值
 - **客户端模式**：通过 GitLab API 客户端与 GitLab 服务器交互
 
