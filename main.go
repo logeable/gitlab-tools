@@ -31,8 +31,8 @@ func init() {
 	config.Init()
 
 	// 全局标志
-	rootCmd.PersistentFlags().StringVar(&gitlabURL, "url", "", "GitLab 服务器 URL (默认: https://gitlab.com)")
-	rootCmd.PersistentFlags().StringVar(&gitlabToken, "token", "", "GitLab 访问令牌 (也可以通过 GITLAB_TOKEN 环境变量设置)")
+	rootCmd.PersistentFlags().StringVar(&gitlabURL, "url", "", "GitLab 服务器 URL (默认: https://gitlab.com，也可通过配置文件或 GITLAB_URL 环境变量设置)")
+	rootCmd.PersistentFlags().StringVar(&gitlabToken, "token", "", "GitLab 访问令牌 (可通过配置文件或 GITLAB_TOKEN 环境变量设置)")
 
 	// 将 Cobra flags 绑定到 Viper（自动从环境变量读取）
 	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))

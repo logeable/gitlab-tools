@@ -1,0 +1,17 @@
+# GitLab Tools 配置文件示例
+# 复制此文件为 gitlab-tools.yaml 并填入你的配置
+
+# GitLab 服务器 URL（默认: https://gitlab.com）
+url: https://gitlab.com
+
+# GitLab 访问令牌
+token: your-gitlab-token-here
+
+# 项目列表默认限制
+project:
+  limit: 20
+
+# Pipeline 列表默认限制
+pipeline:
+  list:
+    limit: 5

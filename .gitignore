@@ -1,2 +1,10 @@
 /gitlab-tools
 /.env
+# 配置文件（包含敏感信息）
+gitlab-tools.yaml
+gitlab-tools.yml
+gitlab-tools.json
+gitlab-tools.toml
+.config/gitlab-tools/
+.gitlab-tools/
+/config.yaml
