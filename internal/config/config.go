@@ -21,6 +21,7 @@ func Init() {
 	// 将环境变量名中的点号和横线替换为下划线（Viper 的默认行为）
 	// 例如：GITLAB_URL, GITLAB_TOKEN
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+	viper.SetEnvPrefix("GITLAB")
 
 	// 配置文件设置
 	viper.SetConfigName("config") // 配置文件名称（不含扩展名）
