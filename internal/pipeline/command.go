@@ -52,8 +52,30 @@ func NewCommand() *cobra.Command {
 	viper.BindPFlag("pipeline.list.limit", pipelineListCmd.Flags().Lookup("limit"))
 	viper.BindPFlag("pipeline.list.status", pipelineListCmd.Flags().Lookup("status"))
 
+	pipelineLatestCmd := &cobra.Command{
+		Use:   "latest <项目ID> <分支名>",
+		Short: "获取指定分支的最新 pipeline",
+		Long:  "获取指定项目的指定分支的最新 pipeline",
+		Example: `  gitlab-tools pipeline latest 123 main
+  gitlab-tools pipeline latest my-group/my-project develop`,
+		Args: cobra.ExactArgs(2),
+		RunE: runLatestCmd,
+	}
+
+	pipelineCheckScheduleCmd := &cobra.Command{
+		Use:   "check-schedule <项目ID>",
+		Short: "检查最近的 scheduled pipeline 是否成功",
+		Long:  "检查指定项目的最近 scheduled pipeline 是否成功，如果未成功则退出码为 1",
+		Example: `  gitlab-tools pipeline check-schedule 123
+  gitlab-tools pipeline check-schedule my-group/my-project`,
+		Args: cobra.ExactArgs(1),
+		RunE: runCheckScheduleCmd,
+	}
+
 	pipelineCmd.AddCommand(pipelineGetCmd)
 	pipelineCmd.AddCommand(pipelineListCmd)
+	pipelineCmd.AddCommand(pipelineLatestCmd)
+	pipelineCmd.AddCommand(pipelineCheckScheduleCmd)
 
 	return pipelineCmd
 }
