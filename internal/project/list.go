@@ -5,9 +5,10 @@ import (
 	"os"
 	"regexp"
 
+	"gitlab-tools/internal/client"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"gitlab-tools/internal/client"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
@@ -34,6 +35,9 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 	if limit == 0 {
 		limit = projectLimit
 	}
+	hasSchedule := viper.GetBool("project.has-schedule") || projectHasSchedule
+	scheduleDetail := viper.GetBool("project.schedule-detail") || projectScheduleDetail
+	quiet := viper.GetBool("project.quiet") || projectQuiet
 
 	// 构建查询选项
 	opt := &gitlab.ListProjectsOptions{
@@ -68,8 +72,24 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 		projects = filterProjectsByRegex(projects, match)
 	}
 
+	// 如果指定了 schedule-detail 但没有指定 has-schedule，给出提示
+	if scheduleDetail && !hasSchedule {
+		return fmt.Errorf("--schedule-detail 需要与 --has-schedule 一起使用")
+	}
+
+	// 如果指定了 has-schedule 参数，过滤有 pipeline schedule 配置的项目
+	var projectSchedules map[string][]*gitlab.PipelineSchedule
+	if hasSchedule {
+		var filtered []*gitlab.Project
+		projectSchedules, err = filterProjectsBySchedule(client, projects, &filtered)
+		if err != nil {
+			return fmt.Errorf("过滤 pipeline schedule 失败: %v", err)
+		}
+		projects = filtered
+	}
+
 	// 打印项目信息
-	printProjectsList(projects)
+	printProjectsList(projects, quiet, scheduleDetail, projectSchedules, client)
 
 	return nil
 }
@@ -94,4 +114,40 @@ func filterProjectsByRegex(projects []*gitlab.Project, pattern string) []*gitlab
 	}
 
 	return filtered
+}
+
+// filterProjectsBySchedule 过滤出有 pipeline schedule 配置的项目，并返回每个项目的 schedules
+// 默认只返回活跃的 schedules
+func filterProjectsBySchedule(client *gitlab.Client, projects []*gitlab.Project, filtered *[]*gitlab.Project) (map[string][]*gitlab.PipelineSchedule, error) {
+	schedulesMap := make(map[string][]*gitlab.PipelineSchedule)
+
+	for _, project := range projects {
+		// 查询项目的 pipeline schedules
+		schedules, _, err := client.PipelineSchedules.ListPipelineSchedules(project.PathWithNamespace, nil)
+		if err != nil {
+			// 如果查询失败（可能是权限问题或项目不存在），跳过该项目
+			continue
+		}
+		// 过滤出活跃的 schedules
+		var activeSchedules []*gitlab.PipelineSchedule
+		for _, schedule := range schedules {
+			if schedule.Active {
+				activeSchedules = append(activeSchedules, schedule)
+			}
+
+			// get schedule detail
+			schedule, _, err := client.PipelineSchedules.GetPipelineSchedule(project.PathWithNamespace, schedule.ID)
+			if err != nil {
+				continue
+			}
+			activeSchedules = append(activeSchedules, schedule)
+		}
+		// 如果有活跃的 pipeline schedule 配置，添加到过滤结果中
+		if len(activeSchedules) > 0 {
+			*filtered = append(*filtered, project)
+			schedulesMap[project.PathWithNamespace] = activeSchedules
+		}
+	}
+
+	return schedulesMap, nil
 }

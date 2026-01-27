@@ -6,12 +6,15 @@ import (
 )
 
 var (
-	projectOwned     bool
-	projectArchived  bool
-	projectSearch    string
-	projectMatch     string
-	projectLimit     int
-	projectGetDetail bool
+	projectOwned          bool
+	projectArchived       bool
+	projectSearch         string
+	projectMatch          string
+	projectLimit          int
+	projectGetDetail      bool
+	projectHasSchedule    bool
+	projectScheduleDetail bool
+	projectQuiet          bool
 )
 
 // NewCommand 创建并返回 project 命令组
@@ -30,7 +33,10 @@ func NewCommand() *cobra.Command {
   gitlab-tools project list --owned
   gitlab-tools project list --search "my-project"
   gitlab-tools project list --match ".*backend.*"
-  gitlab-tools project list --match "^my-group/.*"`,
+  gitlab-tools project list --match "^my-group/.*"
+  gitlab-tools project list --has-schedule
+  gitlab-tools project list --has-schedule --schedule-detail
+  gitlab-tools project list --has-schedule --quiet`,
 		RunE: runListCmd,
 	}
 
@@ -51,6 +57,9 @@ func NewCommand() *cobra.Command {
 	projectListCmd.Flags().StringVar(&projectSearch, "search", "", "搜索项目名称或描述")
 	projectListCmd.Flags().StringVar(&projectMatch, "match", "", "使用正则表达式匹配项目路径或名称")
 	projectListCmd.Flags().IntVar(&projectLimit, "limit", 20, "限制返回的项目数量")
+	projectListCmd.Flags().BoolVar(&projectHasSchedule, "has-schedule", false, "只显示配置了 pipeline schedule 的项目")
+	projectListCmd.Flags().BoolVar(&projectScheduleDetail, "schedule-detail", false, "输出 pipeline schedule 的详细信息（需要与 --has-schedule 一起使用）")
+	projectListCmd.Flags().BoolVar(&projectQuiet, "quiet", false, "只输出项目名称（PathWithNamespace）")
 
 	// 绑定 project list 标志到 Viper
 	viper.BindPFlag("project.owned", projectListCmd.Flags().Lookup("owned"))
@@ -58,6 +67,9 @@ func NewCommand() *cobra.Command {
 	viper.BindPFlag("project.search", projectListCmd.Flags().Lookup("search"))
 	viper.BindPFlag("project.match", projectListCmd.Flags().Lookup("match"))
 	viper.BindPFlag("project.limit", projectListCmd.Flags().Lookup("limit"))
+	viper.BindPFlag("project.has-schedule", projectListCmd.Flags().Lookup("has-schedule"))
+	viper.BindPFlag("project.schedule-detail", projectListCmd.Flags().Lookup("schedule-detail"))
+	viper.BindPFlag("project.quiet", projectListCmd.Flags().Lookup("quiet"))
 
 	// project get 标志
 	projectGetCmd.Flags().BoolVar(&projectGetDetail, "detail", false, "使用详细格式（带颜色）显示完整的项目数据结构")
