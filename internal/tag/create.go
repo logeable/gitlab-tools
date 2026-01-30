@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
@@ -46,6 +47,9 @@ func runCreateCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("创建标签失败: %v", err)
 	}
 
+	if config.GetJSON() {
+		return WriteCreateResultJSON(tag)
+	}
 	// 打印标签信息
 	printTagInfo(tag)
 

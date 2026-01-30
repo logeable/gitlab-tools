@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
@@ -31,6 +32,9 @@ func runDiffCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("获取分支差异失败: %v", err)
 	}
 
+	if config.GetJSON() {
+		return WriteBranchDiffJSON(projectID, sourceBranch, targetBranch, compare)
+	}
 	// 打印分支差异信息
 	printBranchDiff(projectID, sourceBranch, targetBranch, compare, branchDiffStat, branchDiffCommits)
 

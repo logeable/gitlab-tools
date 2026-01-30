@@ -1,13 +1,16 @@
 package pipeline
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"gitlab-tools/internal/client"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
+
+	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
 )
 
 func runListCmd(cmd *cobra.Command, args []string) error {
@@ -59,7 +62,7 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 			"manual":   true,
 		}
 		if !validStatuses[status] {
-			return fmt.Errorf("无效的状态值: %s。支持的状态值: running, pending, success, failed, canceled, skipped, created, manual", status)
+			return errors.Join(config.ErrUsage, fmt.Errorf("无效的状态值: %s。支持的状态值: running, pending, success, failed, canceled, skipped, created, manual", status))
 		}
 		statusValue := gitlab.BuildStateValue(status)
 		opt.Status = &statusValue
@@ -73,6 +76,20 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 	pipelines, _, err := client.Pipelines.ListProjectPipelines(projectID, opt)
 	if err != nil {
 		return fmt.Errorf("获取项目 %s 的 pipeline 列表失败: %v", projectID, err)
+	}
+
+	if config.GetJSON() {
+		// 获取完整 pipeline 信息用于 JSON
+		fullPipelines := make([]*gitlab.Pipeline, 0, len(pipelines))
+		for _, p := range pipelines {
+			full, _, err := client.Pipelines.GetPipeline(projectID, p.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "获取 pipeline %d 失败: %v\n", p.ID, err)
+				continue
+			}
+			fullPipelines = append(fullPipelines, full)
+		}
+		return WritePipelineListJSON(projectID, fullPipelines)
 	}
 
 	fmt.Printf("项目: %s\n", projectID)

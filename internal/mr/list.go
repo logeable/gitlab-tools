@@ -1,14 +1,18 @@
 package mr
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
 	"gitlab-tools/internal/output"
 	"gitlab-tools/internal/pipeline"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
+
+var validMRStates = map[string]bool{"opened": true, "closed": true, "merged": true}
 
 func runListCmd(cmd *cobra.Command, args []string) error {
 	projectID := args[0]
@@ -24,10 +28,15 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 		targetBranch = &mrListTargetBranch
 	}
 
-	var state *string
-	if mrListState != "" {
-		state = &mrListState
+	// --state：未指定时默认 opened；指定则必须为 opened/closed/merged 之一
+	stateVal := mrListState
+	if stateVal == "" {
+		stateVal = "opened"
 	}
+	if !validMRStates[stateVal] {
+		return errors.Join(config.ErrUsage, fmt.Errorf("无效的 --state 值: %s。允许值: opened, closed, merged", mrListState))
+	}
+	state := &stateVal
 
 	opt := &gitlab.ListProjectMergeRequestsOptions{
 		State: state,
@@ -42,6 +51,10 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 	mrs, _, err := client.MergeRequests.ListProjectMergeRequests(projectID, opt)
 	if err != nil {
 		return fmt.Errorf("获取项目 %s 的 Merge Request 列表失败: %v", projectID, err)
+	}
+
+	if config.GetJSON() {
+		return WriteMRListJSON(mrs)
 	}
 
 	// 打印 Merge Request 列表

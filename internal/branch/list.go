@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
@@ -39,6 +40,9 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
+		if config.GetJSON() {
+			return WriteBranchListJSON(projectID, branches)
+		}
 		// 打印分支信息
 		printBranchesList(projectID, branches, true, branchListQuiet)
 	} else {
@@ -56,8 +60,36 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 		}
 
 		if len(projects) == 0 {
-			fmt.Println("未找到项目")
+			if !config.GetJSON() {
+				fmt.Println("未找到项目")
+			}
 			return nil
+		}
+
+		if config.GetJSON() {
+			groups := make([]ProjectBranchesJSON, 0)
+			for _, project := range projects {
+				branches, _, err := client.Branches.ListBranches(project.PathWithNamespace, nil)
+				if err != nil {
+					continue
+				}
+				if search != "" {
+					branches = filterBranchesBySearch(branches, search)
+				}
+				if branchListHideEmpty && len(branches) == 0 {
+					continue
+				}
+				items := make([]BranchItemJSON, 0, len(branches))
+				for _, b := range branches {
+					items = append(items, branchToJSON(b))
+				}
+				groups = append(groups, ProjectBranchesJSON{
+					ProjectID: project.ID,
+					Path:      project.PathWithNamespace,
+					Branches:  items,
+				})
+			}
+			return WriteBranchListAllProjectsJSON(groups)
 		}
 
 		// 为每个项目获取分支

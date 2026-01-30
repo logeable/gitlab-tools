@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
 )
 
 func runListCmd(cmd *cobra.Command, args []string) error {
@@ -22,6 +23,9 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("获取项目 %s 的标签列表失败: %v", projectID, err)
 	}
 
+	if config.GetJSON() {
+		return WriteTagListJSON(tags)
+	}
 	// 打印标签列表
 	printTagsList(projectID, tags)
 

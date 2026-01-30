@@ -21,14 +21,14 @@ var (
 func NewCommand() *cobra.Command {
 	projectCmd := &cobra.Command{
 		Use:   "project",
-		Short: "项目管理",
-		Long:  "查看和管理 GitLab 项目",
+		Short: "列出、搜索、获取项目",
+		Long:  "列出可访问项目、按名称/路径过滤、获取单项目详情。",
 	}
 
 	projectListCmd := &cobra.Command{
 		Use:   "list",
-		Short: "列出项目",
-		Long:  "列出可访问的项目列表，显示基本信息",
+		Short: "列出项目（支持过滤与分页）",
+		Long:  "列出当前可访问的项目。--search 子串匹配名称/描述，--match 正则匹配路径/名称；--has-schedule 只显示有定时流水线的项目。",
 		Example: `  gitlab-tools project list
   gitlab-tools project list --owned
   gitlab-tools project list --search "my-project"
@@ -42,8 +42,8 @@ func NewCommand() *cobra.Command {
 
 	projectGetCmd := &cobra.Command{
 		Use:   "get <项目ID>",
-		Short: "获取项目详细信息",
-		Long:  "获取指定项目的详细信息",
+		Short: "按 ID 或路径获取单项目详情",
+		Long:  "根据项目 ID 或路径获取单项目详情。",
 		Example: `  gitlab-tools project get 123
   gitlab-tools project get my-group/my-project
   gitlab-tools project get 123 --detail`,

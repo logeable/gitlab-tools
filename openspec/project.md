@@ -24,6 +24,7 @@
 - 命令行帮助信息使用中文
 
 ### Architecture Patterns
+本文为代码组织与包结构的**单一事实来源**（与 project-management 等 spec 中的架构要求对应）。
 - **模块化包结构**：代码按功能模块组织到独立的包中
   - `internal/client`：GitLab 客户端创建和管理
   - `internal/config`：配置管理（Viper 相关）

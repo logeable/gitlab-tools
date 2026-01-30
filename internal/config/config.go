@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,9 @@ import (
 
 	"github.com/spf13/viper"
 )
+
+// ErrUsage 表示用法错误（缺少必填参数、非法标志等），main 应退出码 2。
+var ErrUsage = errors.New("usage error")
 
 // Init 初始化 Viper 配置
 // 配置优先级：命令行参数 > 环境变量 > 配置文件 > 默认值
@@ -73,4 +77,9 @@ func GetGitLabURL() string {
 // 配置优先级：命令行参数 > 环境变量 > 配置文件 > 默认值
 func GetGitLabToken() string {
 	return viper.GetString("token")
+}
+
+// GetJSON 是否以 JSON 格式输出（全局 --json 标志）
+func GetJSON() bool {
+	return viper.GetBool("json")
 }

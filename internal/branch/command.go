@@ -16,14 +16,14 @@ var (
 func NewCommand() *cobra.Command {
 	branchCmd := &cobra.Command{
 		Use:   "branch",
-		Short: "分支管理",
-		Long:  "查看和管理 GitLab 项目分支",
+		Short: "列出分支、比较两分支差异",
+		Long:  "列出分支（可选项目）、比较两分支的提交与文件变更。",
 	}
 
 	branchListCmd := &cobra.Command{
 		Use:   "list [项目ID]",
-		Short: "列出项目分支",
-		Long:  "列出指定项目的分支列表，如果不指定项目 ID 则列出所有可访问项目的分支",
+		Short: "列出分支（可选项目；不传则列所有项目，可能较慢）",
+		Long:  "列出分支；不传项目则列所有可访问项目（可能较慢）。--search 按分支名过滤，--quiet 只输出名称。",
 		Example: `  gitlab-tools branch list
   gitlab-tools branch list 123
   gitlab-tools branch list my-group/my-project
@@ -38,18 +38,8 @@ func NewCommand() *cobra.Command {
 
 	branchDiffCmd := &cobra.Command{
 		Use:   "diff <项目ID> <源分支> <目标分支>",
-		Short: "比较分支差异",
-		Long: `比较两个分支之间的差异，显示提交差异和文件变更统计。
-
-源分支（From）：作为比较基准的分支，通常是主分支（如 main 或 master）。
-目标分支（To）：要比较的分支，通常是功能分支（如 feature）。
-
-比较结果将显示目标分支相对于源分支的变化，包括：
-- 从源分支到目标分支之间的所有提交
-- 目标分支中新增、修改、删除的文件
-
-示例：gitlab-tools branch diff 123 main feature
-将显示 feature 分支相对于 main 分支的所有变更。`,
+		Short: "比较源分支与目标分支的提交与文件变更",
+		Long:  "比较源分支与目标分支的提交与文件变更。--stat 仅文件统计，--commits 仅提交列表。",
 		Example: `  gitlab-tools branch diff 123 main feature
   gitlab-tools branch diff my-group/my-project main feature
   gitlab-tools branch diff 123 main feature --stat

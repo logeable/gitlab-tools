@@ -1,11 +1,13 @@
 package project
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
 
 	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -62,9 +64,9 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 	// 获取选项
 	opts := getListOptions()
 
-	// 验证选项
+	// 验证选项（用法错误 → 退出码 2）
 	if opts.scheduleDetail && !opts.hasSchedule {
-		return fmt.Errorf("--schedule-detail 需要与 --has-schedule 一起使用")
+		return errors.Join(config.ErrUsage, fmt.Errorf("--schedule-detail 需要与 --has-schedule 一起使用"))
 	}
 
 	// 构建查询选项
@@ -79,7 +81,10 @@ func runListCmd(cmd *cobra.Command, args []string) error {
 	// 应用过滤并获取 schedules（如果需要）
 	projects, schedulesMap := applyFilters(client, projects, opts)
 
-	// 打印项目信息
+	// 输出：--json 时输出 JSON，否则人类可读
+	if config.GetJSON() {
+		return writeProjectsJSON(projects)
+	}
 	printProjectsList(projects, opts, schedulesMap, client)
 
 	return nil

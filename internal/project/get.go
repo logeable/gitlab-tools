@@ -2,9 +2,12 @@ package project
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
+	"gitlab-tools/internal/output"
 )
 
 func runGetCmd(cmd *cobra.Command, args []string) error {
@@ -22,7 +25,10 @@ func runGetCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("获取项目信息失败: %v", err)
 	}
 
-	// 打印项目信息
+	// 输出：--json 时输出 JSON，否则人类可读
+	if config.GetJSON() {
+		return output.WriteJSON(os.Stdout, projectToGetJSON(project))
+	}
 	printProjectInfo(project, projectGetDetail)
 
 	return nil

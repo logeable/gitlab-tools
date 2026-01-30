@@ -14,14 +14,14 @@ var (
 func NewCommand() *cobra.Command {
 	tagCmd := &cobra.Command{
 		Use:   "tag",
-		Short: "Tag 管理",
-		Long:  "查看和管理 GitLab 项目标签",
+		Short: "列出、创建、删除项目标签",
+		Long:  "列出、创建、删除项目标签。创建时 --ref 优先于 --branch，缺省默认 main。",
 	}
 
 	tagListCmd := &cobra.Command{
 		Use:   "list <项目ID>",
-		Short: "列出项目的标签",
-		Long:  "列出指定项目的所有标签列表",
+		Short: "列出指定项目的所有标签",
+		Long:  "列出指定项目的所有标签。",
 		Example: `  gitlab-tools tag list 123
   gitlab-tools tag list my-group/my-project`,
 		Args: cobra.ExactArgs(1),
@@ -30,8 +30,8 @@ func NewCommand() *cobra.Command {
 
 	tagCreateCmd := &cobra.Command{
 		Use:   "create <项目ID> <标签名>",
-		Short: "创建标签",
-		Long:  "在指定项目上创建标签，默认在 main 分支上创建",
+		Short: "在指定 ref 或分支上创建标签（--ref 优先于 --branch）",
+		Long:  "在指定 ref 或分支上创建标签；--ref 与 --branch 同时存在时以 --ref 为准，缺省默认 main。",
 		Example: `  gitlab-tools tag create 123 v1.0.0
   gitlab-tools tag create my-group/my-project v1.0.0
   gitlab-tools tag create 123 v1.0.0 --branch develop
@@ -43,8 +43,8 @@ func NewCommand() *cobra.Command {
 
 	tagDeleteCmd := &cobra.Command{
 		Use:   "delete <项目ID> <标签名>",
-		Short: "删除标签",
-		Long:  "删除指定项目的标签",
+		Short: "删除指定项目的指定标签",
+		Long:  "删除指定项目的指定标签。",
 		Example: `  gitlab-tools tag delete 123 v1.0.0
   gitlab-tools tag delete my-group/my-project v1.0.0`,
 		Args: cobra.ExactArgs(2),

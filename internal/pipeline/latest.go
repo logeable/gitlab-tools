@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
@@ -45,7 +46,9 @@ func runLatestCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("获取 pipeline %d 详细信息失败: %v", pipelines[0].ID, err)
 	}
 
-	// 打印 pipeline 信息
+	if config.GetJSON() {
+		return WritePipelineGetJSON(pipeline)
+	}
 	PrintPipelineInfo(pipeline)
 
 	return nil

@@ -19,14 +19,14 @@ var (
 func NewCommand() *cobra.Command {
 	mrCmd := &cobra.Command{
 		Use:   "mr",
-		Short: "Merge Request 管理",
-		Long:  "查看和管理 GitLab Merge Request",
+		Short: "列出、创建、合并 Merge Request",
+		Long:  "列出 MR（默认 opened）、创建 MR、按 IID 合并。",
 	}
 
 	mrListCmd := &cobra.Command{
 		Use:   "list <项目ID>",
-		Short: "列出项目的开放 Merge Request",
-		Long:  "列出指定项目的所有开放 Merge Request 列表",
+		Short: "列出 MR（默认 opened；可按 state/target-branch 过滤）",
+		Long:  "列出项目的 MR；--state 为 opened/closed/merged（默认 opened），--target-branch 按目标分支过滤。",
 		Example: `  gitlab-tools mr list 123
   gitlab-tools mr list my-group/my-project
   gitlab-tools mr list my-group/my-project --target-branch feature
@@ -40,8 +40,8 @@ func NewCommand() *cobra.Command {
 
 	mrCreateCmd := &cobra.Command{
 		Use:   "create <项目ID> <源分支> <目标分支>",
-		Short: "创建 Merge Request",
-		Long:  "创建新的 Merge Request，从源分支合并到目标分支",
+		Short: "从源分支向目标分支创建 MR",
+		Long:  "从源分支向目标分支创建 MR。--title/--description 可选，--quiet 只输出链接。",
 		Example: `  gitlab-tools mr create 123 feature main
   gitlab-tools mr create my-group/my-project feature main
   gitlab-tools mr create 123 feature main --title "我的功能"
@@ -53,8 +53,8 @@ func NewCommand() *cobra.Command {
 
 	mrMergeCmd := &cobra.Command{
 		Use:   "merge <项目ID> <MR IID>",
-		Short: "合并 Merge Request",
-		Long:  "合并指定的 Merge Request",
+		Short: "按项目与 IID 合并 MR（可选合并后删源分支）",
+		Long:  "按项目与 MR IID 合并。--delete-source-branch 合并后删除源分支。失败（如已合并、冲突）exit 1。",
 		Example: `  gitlab-tools mr merge 123 456
   gitlab-tools mr merge my-group/my-project 456
   gitlab-tools mr merge 123 456 --delete-source-branch

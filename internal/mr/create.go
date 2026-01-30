@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"gitlab-tools/internal/client"
+	"gitlab-tools/internal/config"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
 
@@ -93,6 +94,9 @@ func runCreateCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("创建 Merge Request 失败: %v", err)
 	}
 
+	if config.GetJSON() {
+		return WriteCreateResultJSON(mr)
+	}
 	// 打印 Merge Request 信息
 	printMergeRequestInfo(mr, mrCreateQuiet)
 

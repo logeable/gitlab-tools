@@ -69,6 +69,35 @@ export GITLAB_TOKEN=your-gitlab-token-here
 gitlab-tools --url https://gitlab.com --token your-token project list
 ```
 
+### 原子命令集
+
+以下为稳定、可组合的原子命令（每个命令做一件事，参数与输出可预期）。所有命令支持全局 `--json` 输出，便于脚本与 Agent 解析。
+
+| 域       | 命令 | 用途 | 主要参数 |
+|----------|------|------|----------|
+| project  | list | 列出项目 | [--owned] [--search] [--match] [--limit] [--has-schedule] [--quiet] |
+| project  | get  | 获取单项目详情 | \<项目ID或路径\> |
+| pipeline | list | 列出 Pipeline | \<项目\> [--status] [--ref] [--limit] |
+| pipeline | get  | 获取单条 Pipeline | \<项目\> \<PipelineID\> |
+| pipeline | latest | 指定 ref 的最新 Pipeline | \<项目\> \<ref\> |
+| pipeline | check-schedule | 检查 Scheduled Pipeline | \<项目\> |
+| branch   | list | 列出分支 | [项目] [--search] [--hide-empty] [--quiet] |
+| branch   | diff | 比较两分支差异 | \<项目\> \<源分支\> \<目标分支\> [--stat] [--commits] |
+| mr       | list | 列出 MR | \<项目\> [--state] [--target-branch] [--with-pipelines] |
+| mr       | create | 创建 MR | \<项目\> \<源分支\> \<目标分支\> [--title] [--description] |
+| mr       | merge | 合并 MR | \<项目\> \<MR IID\> [--delete-source-branch] [--merge-commit-message] |
+| tag      | list | 列出标签 | \<项目\> |
+| tag      | create | 创建标签 | \<项目\> \<标签名\> [--branch] [--ref] [--message] |
+| tag      | delete | 删除标签 | \<项目\> \<标签名\> |
+
+运行 `gitlab-tools capabilities` 可输出上述能力列表（便于 Agent 发现）。
+
+### 退出码约定
+
+- **0**：执行成功（含空列表）
+- **1**：业务或 API 错误（如项目不存在、无权限、MR 已合并）
+- **2**：用法错误（缺少必填参数、非法标志如无效 `--status`）
+
 ## 📖 使用示例
 
 ### 项目管理
@@ -240,12 +269,70 @@ Agent Skill 支持以下操作：
 
 更多详细信息请查看 [skills/SKILL.md](skills/SKILL.md)。
 
+## 工作流与组合示例
+
+以下为典型组合：先调用原子命令解析输出（如项目 ID/路径），再链式调用下一命令。配合 `--json` 可解析 stdout 做自动化。
+
+1. **发现项目 → 看分支 → 比较差异 → 创建 MR**
+   ```bash
+   gitlab-tools project list --search "my-app" --json   # 解析 id/path
+   gitlab-tools branch list <project> --json            # 解析分支名
+   gitlab-tools branch diff <project> main feature --json
+   gitlab-tools mr create <project> feature main --title "Feature" --json
+   ```
+
+2. **最新 Pipeline 查询与按状态过滤**
+   ```bash
+   gitlab-tools pipeline latest <project> main --json
+   gitlab-tools pipeline list <project> --status success --limit 10 --json
+   ```
+
+3. **标签创建与删除流程**
+   ```bash
+   gitlab-tools tag list <project> --json
+   gitlab-tools tag create <project> v1.0.0 --message "Release 1.0" --json
+   gitlab-tools tag delete <project> v1.0.0
+   ```
+
+4. **列出 open MR 并合并**
+   ```bash
+   gitlab-tools mr list <project> --state opened --json  # 解析 iid
+   gitlab-tools mr merge <project> <iid> --delete-source-branch
+   ```
+
+5. **检查 Scheduled Pipeline 是否成功**
+   ```bash
+   gitlab-tools pipeline check-schedule <project>  # 成功 exit 0，失败 exit 1
+   ```
+
+## Agent 与脚本使用
+
+- **机器可读输出**：任意子命令加全局 `--json`，结果输出到 stdout，字段为 snake_case（如 `web_url`、`created_at`），便于脚本与 Agent 解析、链式调用。
+- **退出码**：0 成功，1 业务/API 错误，2 用法错误；脚本可根据 exit code 分支。
+- **错误时 `--json`**：错误信息以 JSON 写入 stderr，格式为 `{"error":"消息","code":1}` 或 `{"error":"消息","code":2}`，`code` 与退出码一致（1 业务错误，2 用法错误）。
+- **能力发现**：运行 `gitlab-tools capabilities`（或 `gitlab-tools capabilities --json`）可获取原子命令列表。
+- **工作流**：见上文「工作流与组合示例」。
+
+### 枚举、默认值与分页
+
+- **`--limit`**：`project list` 默认 20；`pipeline list` 默认每项目 5 条。具体上限以 GitLab API 为准（通常单页最大 100）。
+- **`pipeline list --status`**：允许值为 `running`、`pending`、`success`、`failed`、`canceled`、`skipped`、`created`、`manual`；非法值返回退出码 2。
+- **`mr list --state`**：允许值为 `opened`、`closed`、`merged`；未指定时默认为 `opened`；非法值返回退出码 2。
+
+### 排序与过滤语义
+
+- **List 排序**：`pipeline list` 按 `updated_at` 降序（最新在前）；`tag list`、`mr list` 依 GitLab API 默认排序（一般为创建时间或更新时间降序）。
+- **`project list`**：`--search` 为子串匹配，作用于项目名称与描述（由服务端执行）；`--match` 为正则匹配，作用于项目路径（path_with_namespace）、名称（name）、name_with_namespace，在客户端执行。
+- **`tag create`**：`--ref` 与 `--branch` 同时存在时以 `--ref` 为准；均未指定时使用默认分支 `main` 作为 ref。
+- **`branch list`**：不传项目时会列出所有可访问项目的分支，结果可能较多、耗时较长，建议在已知项目时显式传入项目 ID 或路径。
+
 ## 📚 命令参考
 
 ### 全局参数
 
 - `--url`: GitLab 服务器 URL（默认: https://gitlab.com）
 - `--token`: GitLab 访问令牌
+- `--json`: 以 JSON 格式输出结果，便于脚本与 Agent 解析
 
 ### 项目命令 (`project`)
 
@@ -285,7 +372,7 @@ Agent Skill 支持以下操作：
 
 - `list <项目ID>`: 列出项目的 Merge Request
   - `--target-branch`: 按目标分支过滤
-  - `--state`: 按状态过滤（opened, closed, merged）
+  - `--state`: 按状态过滤（opened, closed, merged）；未指定时默认为 opened；非法值返回退出码 2
   - `--with-pipelines`: 显示 Merge Request 的 Pipelines
 - `create <项目ID> <源分支> <目标分支>`: 创建 Merge Request
   - `--title`: 指定 Merge Request 的标题

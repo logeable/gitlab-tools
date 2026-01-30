@@ -15,14 +15,14 @@ var (
 func NewCommand() *cobra.Command {
 	pipelineCmd := &cobra.Command{
 		Use:   "pipeline",
-		Short: "Pipeline 管理",
-		Long:  "查看和管理 GitLab Pipeline",
+		Short: "查看流水线状态、列表、最新与定时任务",
+		Long:  "查看单条流水线、列出一项目的流水线、取某 ref 最新一条、检查定时流水线是否成功。",
 	}
 
 	pipelineGetCmd := &cobra.Command{
 		Use:   "get <项目ID> <PipelineID>",
-		Short: "获取 pipeline 详细信息",
-		Long:  "获取指定项目的 pipeline 状态和详细信息",
+		Short: "按项目与 Pipeline ID 获取单条流水线详情",
+		Long:  "根据项目与流水线 ID 获取单条流水线详情。",
 		Example: `  gitlab-tools pipeline get 123 456
   gitlab-tools pipeline get my-group/my-project 789`,
 		Args: cobra.ExactArgs(2),
@@ -31,8 +31,8 @@ func NewCommand() *cobra.Command {
 
 	pipelineListCmd := &cobra.Command{
 		Use:   "list <项目ID>...",
-		Short: "列出项目的 pipelines",
-		Long:  "列出指定项目的 pipeline 列表，每个项目显示最近的几条",
+		Short: "列出指定项目的流水线（可按状态/ref/条数过滤）",
+		Long:  "列出项目的流水线，默认按更新时间降序。--status/--ref/--limit 过滤。",
 		Example: `  gitlab-tools pipeline list 123
   gitlab-tools pipeline list 123
   gitlab-tools pipeline list my-group/my-project
@@ -54,8 +54,8 @@ func NewCommand() *cobra.Command {
 
 	pipelineLatestCmd := &cobra.Command{
 		Use:   "latest <项目ID> <分支名>",
-		Short: "获取指定分支的最新 pipeline",
-		Long:  "获取指定项目的指定分支的最新 pipeline",
+		Short: "获取某 ref 的最新一条流水线",
+		Long:  "获取指定项目、指定 ref 的最新一条流水线。",
 		Example: `  gitlab-tools pipeline latest 123 main
   gitlab-tools pipeline latest my-group/my-project develop`,
 		Args: cobra.ExactArgs(2),
@@ -64,8 +64,8 @@ func NewCommand() *cobra.Command {
 
 	pipelineCheckScheduleCmd := &cobra.Command{
 		Use:   "check-schedule <项目ID>",
-		Short: "检查最近的 scheduled pipeline 是否成功",
-		Long:  "检查指定项目的最近 scheduled pipeline 是否成功，如果未成功则退出码为 1",
+		Short: "检查定时流水线最近一次是否成功（失败则 exit 1）",
+		Long:  "检查指定项目最近一次定时流水线是否成功。成功 exit 0，未成功或未配置 exit 1。",
 		Example: `  gitlab-tools pipeline check-schedule 123
   gitlab-tools pipeline check-schedule my-group/my-project`,
 		Args: cobra.ExactArgs(1),
