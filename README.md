@@ -34,6 +34,23 @@ go install gitlab-tools@latest
 
 ## ⚙️ 配置
 
+### 快速配置：config auth
+
+使用 `config auth` 可交互式或通过参数设置 GitLab URL 与访问令牌并写入配置文件：
+
+```bash
+# 交互式输入 URL 与 token
+gitlab-tools config auth
+
+# 直接传入参数
+gitlab-tools config auth --url https://gitlab.com --token glpat-xxx
+
+# 指定配置文件路径（-c 后本次读写均使用该文件）
+gitlab-tools -c /path/to/config.yaml config auth
+```
+
+未指定 `-c` 时，默认写入 `~/.config/gitlab-tools/config.yaml`（目录不存在时会自动创建）。
+
 ### 配置文件
 
 复制示例配置文件并填入你的配置：
@@ -50,6 +67,12 @@ url: https://gitlab.com
 
 # GitLab 访问令牌
 token: your-gitlab-token-here
+```
+
+使用 `-c`/`--config` 可指定本次运行使用的配置文件路径，便于多环境或多项目使用不同配置：
+
+```bash
+gitlab-tools -c /path/to/config.yaml project list
 ```
 
 ### 环境变量
@@ -75,6 +98,7 @@ gitlab-tools --url https://gitlab.com --token your-token project list
 
 | 域       | 命令 | 用途 | 主要参数 |
 |----------|------|------|----------|
+| config   | auth | 设置 GitLab URL 与访问令牌 | [--url] [--token]（可配合 -c 指定配置文件） |
 | project  | list | 列出项目 | [--owned] [--search] [--match] [--limit] [--has-schedule] [--quiet] |
 | project  | get  | 获取单项目详情 | \<项目ID或路径\> |
 | pipeline | list | 列出 Pipeline | \<项目\> [--status] [--ref] [--limit] |
@@ -328,8 +352,16 @@ Agent Skill 支持以下操作：
 
 ## 📚 命令参考
 
+### 配置命令 (`config`)
+
+- `auth`: 设置 GitLab URL 与访问令牌并写入配置文件
+  - `--url`: GitLab 服务器 URL（可选，未传则交互式输入）
+  - `--token`: GitLab 访问令牌（可选，未传则交互式输入）
+  - 配合全局 `-c`/`--config` 可指定写入的配置文件路径
+
 ### 全局参数
 
+- `-c` / `--config`: 配置文件路径（指定后本次运行读写均使用该文件，可与 `config auth` 配合）
 - `--url`: GitLab 服务器 URL（默认: https://gitlab.com）
 - `--token`: GitLab 访问令牌
 - `--json`: 以 JSON 格式输出结果，便于脚本与 Agent 解析

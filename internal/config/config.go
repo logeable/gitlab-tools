@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/spf13/viper"
 )
@@ -13,55 +14,42 @@ import (
 // ErrUsage 表示用法错误（缺少必填参数、非法标志等），main 应退出码 2。
 var ErrUsage = errors.New("usage error")
 
-// Init 初始化 Viper 配置
+var initOnce sync.Once
+
+// Init 初始化 Viper 配置，应在根命令 PersistentPreRunE 中调用并传入 -c/--config 的解析值。
+// configFilePath 为空时使用默认搜索路径，非空时仅从该文件读取。
 // 配置优先级：命令行参数 > 环境变量 > 配置文件 > 默认值
-func Init() {
-	// 设置环境变量前缀（可选，如果设置则环境变量需要以 GITLAB_TOOLS_ 开头）
-	// viper.SetEnvPrefix("GITLAB_TOOLS")
+func Init(configFilePath string) {
+	initOnce.Do(func() {
+		viper.AutomaticEnv()
+		viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+		viper.SetEnvPrefix("GITLAB")
 
-	// 自动读取环境变量
-	viper.AutomaticEnv()
-
-	// 将环境变量名中的点号和横线替换为下划线（Viper 的默认行为）
-	// 例如：GITLAB_URL, GITLAB_TOKEN
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
-	viper.SetEnvPrefix("GITLAB")
-
-	// 配置文件设置
-	viper.SetConfigName("config") // 配置文件名称（不含扩展名）
-
-	// 添加配置文件搜索路径（按优先级顺序）
-	// 1. 当前工作目录
-	viper.AddConfigPath(".")
-
-	// 2. 用户主目录下的 .config 目录
-	if home, err := os.UserHomeDir(); err == nil {
-		configDir := filepath.Join(home, ".config", "gitlab-tools")
-		viper.AddConfigPath(configDir)
-		// 也支持直接在用户主目录
-		viper.AddConfigPath(home)
-	}
-
-	// 3. 用户主目录下的 .gitlab-tools 目录
-	if home, err := os.UserHomeDir(); err == nil {
-		viper.AddConfigPath(filepath.Join(home, ".gitlab-tools"))
-	}
-
-	// 读取配置文件（如果存在，忽略文件不存在的错误）
-	err := viper.ReadInConfig()
-	if err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+		if configFilePath != "" {
+			viper.SetConfigFile(configFilePath)
 		} else {
-			fmt.Fprintf(os.Stderr, "读取配置文件失败: %v\n", err)
-			os.Exit(1)
+			viper.SetConfigName("config")
+			viper.AddConfigPath(".")
+			if home, err := os.UserHomeDir(); err == nil {
+				viper.AddConfigPath(filepath.Join(home, ".config", "gitlab-tools"))
+				viper.AddConfigPath(home)
+				viper.AddConfigPath(filepath.Join(home, ".gitlab-tools"))
+			}
 		}
-	}
 
-	// 设置默认值
-	viper.SetDefault("url", "https://gitlab.com")
-	viper.SetDefault("project.limit", 20)
-	viper.SetDefault("pipeline.list.limit", 5)
+		err := viper.ReadInConfig()
+		if err != nil {
+			if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			} else {
+				fmt.Fprintf(os.Stderr, "读取配置文件失败: %v\n", err)
+				os.Exit(1)
+			}
+		}
 
+		viper.SetDefault("url", "https://gitlab.com")
+		viper.SetDefault("project.limit", 20)
+		viper.SetDefault("pipeline.list.limit", 5)
+	})
 }
 
 // GetGitLabURL 获取 GitLab 服务器 URL

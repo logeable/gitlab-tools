@@ -18,9 +18,10 @@ import (
 )
 
 var (
-	gitlabURL   string
-	gitlabToken string
-	jsonOutput  bool
+	gitlabURL    string
+	gitlabToken  string
+	jsonOutput   bool
+	configPath   string
 )
 
 var rootCmd = &cobra.Command{
@@ -30,25 +31,28 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	// 初始化 Viper
-	config.Init()
-
-	// 全局标志
+	// 全局标志（-c 需在 config.Init() 前绑定，Init 在 PersistentPreRunE 中根据 -c 执行）
+	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "配置文件路径（指定后本次运行读写均使用该文件，可与 config auth 配合）")
 	rootCmd.PersistentFlags().StringVar(&gitlabURL, "url", "", "GitLab 服务器 URL (默认: https://gitlab.com，也可通过配置文件或 GITLAB_URL 环境变量设置)")
 	rootCmd.PersistentFlags().StringVar(&gitlabToken, "token", "", "GitLab 访问令牌 (可通过配置文件或 GITLAB_TOKEN 环境变量设置)")
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "以 JSON 格式输出结果，便于脚本与 Agent 解析")
 
-	// 将 Cobra flags 绑定到 Viper（自动从环境变量读取）
+	viper.BindPFlag("config", rootCmd.PersistentFlags().Lookup("config"))
 	viper.BindPFlag("url", rootCmd.PersistentFlags().Lookup("url"))
 	viper.BindPFlag("token", rootCmd.PersistentFlags().Lookup("token"))
 	viper.BindPFlag("json", rootCmd.PersistentFlags().Lookup("json"))
 
-	// 添加子命令
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		config.Init(configPath)
+		return nil
+	}
+
 	rootCmd.AddCommand(pipeline.NewCommand())
 	rootCmd.AddCommand(project.NewCommand())
 	rootCmd.AddCommand(branch.NewCommand())
 	rootCmd.AddCommand(mr.NewCommand())
 	rootCmd.AddCommand(tag.NewCommand())
+	rootCmd.AddCommand(config.NewCommand())
 	rootCmd.AddCommand(newCapabilitiesCmd())
 }
 
@@ -76,6 +80,7 @@ func newCapabilitiesCmd() *cobra.Command {
 		Args   string `json:"args"`
 	}
 	caps := []cap{
+		{"config", "auth", "设置 GitLab URL 与访问令牌", "[--url] [--token] (可配合 -c 指定配置文件)"},
 		{"project", "list", "列出项目", "[--owned] [--search] [--match] [--limit] [--quiet]"},
 		{"project", "get", "获取单项目详情", "<项目ID或路径>"},
 		{"pipeline", "list", "列出 Pipeline", "<项目> [--status] [--ref] [--limit]"},
