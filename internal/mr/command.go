@@ -10,6 +10,7 @@ var (
 	mrCreateQuiet        bool
 	mrMergeDeleteSource  bool
 	mrMergeCommitMessage string
+	mrMergeLink          string
 	mrListTargetBranch   string
 	mrListState          string
 	mrListWithPipelines  bool
@@ -59,7 +60,6 @@ func NewCommand() *cobra.Command {
   gitlab-tools mr merge my-group/my-project 456
   gitlab-tools mr merge 123 456 --delete-source-branch
   gitlab-tools mr merge 123 456 --merge-commit-message "合并信息"`,
-		Args: cobra.ExactArgs(2),
 		RunE: runMergeCmd,
 	}
 
@@ -71,6 +71,7 @@ func NewCommand() *cobra.Command {
 	// mr merge 标志
 	mrMergeCmd.Flags().BoolVar(&mrMergeDeleteSource, "delete-source-branch", false, "合并后删除源分支")
 	mrMergeCmd.Flags().StringVar(&mrMergeCommitMessage, "merge-commit-message", "", "自定义合并提交信息")
+	mrMergeCmd.Flags().StringVar(&mrMergeLink, "link", "", "合并链接")
 
 	// mr list 标志
 	mrListCmd.Flags().StringVar(&mrListTargetBranch, "target-branch", "", "按目标分支过滤 Merge Request")
