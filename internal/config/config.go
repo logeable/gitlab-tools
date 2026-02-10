@@ -29,7 +29,6 @@ func Init(configFilePath string) {
 			viper.SetConfigFile(configFilePath)
 		} else {
 			viper.SetConfigName("config")
-			viper.AddConfigPath(".")
 			if home, err := os.UserHomeDir(); err == nil {
 				viper.AddConfigPath(filepath.Join(home, ".config", "gitlab-tools"))
 				viper.AddConfigPath(home)
